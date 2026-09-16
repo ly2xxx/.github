@@ -12,6 +12,13 @@ git push
 
 Add OLLAMA_API_KEY, OLLAMA_MODEL=deepseek-v4-flash:cloud
 
+============================
+docker ps
+kubectl get ingress -A
+kubectl -n ai-platform get ingress litellm-ingress -o yaml
+
+https://replit.com/@info13335/Asset-Manager
+
 =============================
 http://litellm.localhost:8081/spend/logs/ui?start_date=2026-09-15+16%3A29%3A07&end_date=2026-09-15+16%3A33%3A47&page=1&page_size=100&sort_by=startTime&sort_order=desc&group_by_session=false
 
