@@ -1,0 +1,56 @@
+# In PowerShell:
+winget install --id GitHub.cli -e
+
+$repos = @("langgraph_ollama", "interview-playground")
+foreach ($repo in $repos) {
+    gh secret set OLLAMA_API_KEY --repo "ly2xxx/$repo" --body "your-ollama-api-key"
+}
+
+=============================
+http://litellm.localhost:8081/spend/logs/ui?start_date=2026-09-15+16%3A29%3A07&end_date=2026-09-15+16%3A33%3A47&page=1&page_size=100&sort_by=startTime&sort_order=desc&group_by_session=false
+
+{"error":{"message":"Authentication Error, No api key passed in.","type":"auth_error","param":"None","code":"401"}}
+
+curl -G "http://litellm.localhost:8081/spend/logs/ui" \
+  --data-urlencode "start_date=2026-09-15 16:29:07" \
+  --data-urlencode "end_date=2026-09-15 16:33:47" \
+  --data-urlencode "page=1" \
+  --data-urlencode "page_size=100" \
+  --data-urlencode "sort_by=startTime" \
+  --data-urlencode "sort_order=desc" \
+  --data-urlencode "group_by_session=false" \
+  -H "Authorization: Bearer sk-admin"
+
+curl.exe -G "http://litellm.localhost:8081/spend/logs/ui" --data-urlencode "start_date=2026-09-15 16:29:07" --data-urlencode "end_date=2026-09-15 16:33:47" --data-urlencode "page=1" --data-urlencode "page_size=100" --data-urlencode "sort_by=startTime" --data-urlencode "sort_order=desc" --data-urlencode "group_by_session=false" -H "Authorization: Bearer sk-admin"
+=============================
+$params = @{
+    start_date       = "2026-09-15 22:13:37"
+    end_date         = "2026-09-15 22:15:30"
+    page             = 1
+    page_size        = 100
+    sort_by          = "startTime"
+    sort_order       = "desc"
+    group_by_session = "false"
+}
+
+$query = ($params.GetEnumerator() | ForEach-Object { "$($_.Key)=$([uri]::EscapeDataString([string]$_.Value))" }) -join "&"
+
+$response = Invoke-RestMethod -Uri "http://localhost:8081/spend/logs/ui?$query" -Headers @{ Authorization = "Bearer sk-admin" }
+
+$response | ConvertTo-Json -Depth 10 | Out-File logs.json
+
+=============================
+,
+        {
+            "name": "Debug evals.runner real test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/evals/runner.py",
+            "args": [
+                "--tasks",
+                "bug-001",
+                "--keep"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
