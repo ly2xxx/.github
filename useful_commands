@@ -6,6 +6,10 @@ foreach ($repo in $repos) {
     gh secret set OLLAMA_API_KEY --repo "ly2xxx/$repo" --body "your-ollama-api-key"
 }
 
+git update-index --chmod=+x .github/actions/commit-delta-summary/commit-delta-summary.sh
+git commit -m "fix: make commit-delta-summary.sh executable"
+git push
+
 =============================
 http://litellm.localhost:8081/spend/logs/ui?start_date=2026-09-15+16%3A29%3A07&end_date=2026-09-15+16%3A33%3A47&page=1&page_size=100&sort_by=startTime&sort_order=desc&group_by_session=false
 
