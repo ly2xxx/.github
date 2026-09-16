@@ -1,0 +1,98 @@
+name: Commit Delta Summary
+description: Summarise the delta between two revisions using Ollama Cloud.
+author: ly2xxx
+
+# A composite action, not a bare workflow, for one reason: the summariser script
+# ships INSIDE this directory and resolves via github.action_path. A workflow
+# that shells out to scripts/… would require every consuming repo to keep its own
+# copy of that script, which defeats the point of sharing.
+
+inputs:
+  base:
+    description: Base revision (tag, branch or SHA). Defaults to the event's base.
+    required: false
+    default: ""
+  head:
+    description: Head revision. Defaults to the event's head.
+    required: false
+    default: ""
+  model:
+    description: Ollama Cloud model.
+    required: false
+    default: qwen3.5:cloud
+  max-diff-chars:
+    description: Truncate the diff beyond this many characters.
+    required: false
+    default: "60000"
+  outfile:
+    description: Where to write the Markdown summary.
+    required: false
+    default: commit-delta-summary.md
+  ollama-api-key:
+    description: Ollama Cloud API key. Forked PRs never receive secrets; the action skips cleanly when empty.
+    required: false
+    default: ""
+
+outputs:
+  summary-file:
+    description: Path to the generated Markdown, or empty if the run was skipped.
+    value: ${{ steps.generate.outputs.file }}
+  skipped:
+    description: "true when no API key was available."
+    value: ${{ steps.generate.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the revision range
+      id: range
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        PUSH_AFTER: ${{ github.sha }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        IN_BASE: ${{ inputs.base }}
+        IN_HEAD: ${{ inputs.head }}
+      run: |
+        set -euo pipefail
+        if [ -n "$IN_BASE" ]; then
+          base="$IN_BASE"; head="${IN_HEAD:-HEAD}"
+        else
+          case "$EVENT_NAME" in
+            pull_request|pull_request_target) base="$PR_BASE"; head="$PR_HEAD" ;;
+            *)                                base="$PUSH_BEFORE"; head="$PUSH_AFTER" ;;
+          esac
+        fi
+        # A branch's first push reports an all-zero "before"; fall back to the parent.
+        if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          base="${head}~1"
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "head=$head" >> "$GITHUB_OUTPUT"
+        echo "Range: $base..$head"
+
+    - name: Generate summary
+      id: generate
+      shell: bash
+      env:
+        OLLAMA_API_KEY: ${{ inputs.ollama-api-key }}
+        OLLAMA_MODEL: ${{ inputs.model }}
+        MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
+      run: |
+        set -euo pipefail
+        if [ -z "${OLLAMA_API_KEY}" ]; then
+          echo "::warning::No Ollama API key (forked PRs never receive secrets) - skipping."
+          echo "_Commit delta summary skipped: no API key available._" >> "$GITHUB_STEP_SUMMARY"
+          echo "skipped=true" >> "$GITHUB_OUTPUT"
+          echo "file=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        "${{ github.action_path }}/commit-delta-summary.sh" \
+          "${{ steps.range.outputs.base }}" \
+          "${{ steps.range.outputs.head }}" \
+          "${{ inputs.outfile }}"
+        cat "${{ inputs.outfile }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "skipped=false" >> "$GITHUB_OUTPUT"
+        echo "file=${{ inputs.outfile }}" >> "$GITHUB_OUTPUT"
