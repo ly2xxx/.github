@@ -32,6 +32,14 @@ inputs:
     description: Ollama Cloud API key. Forked PRs never receive secrets; the action skips cleanly when empty.
     required: false
     default: ""
+  custom-prompt:
+    description: Additional instructions or custom prompt to append on top of the base prompt.
+    required: false
+    default: ""
+  system-prompt:
+    description: Override the base prompt instruction.
+    required: false
+    default: ""
 
 outputs:
   summary-file:
@@ -80,6 +88,8 @@ runs:
         OLLAMA_API_KEY: ${{ inputs.ollama-api-key }}
         OLLAMA_MODEL: ${{ inputs.model }}
         MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
+        CUSTOM_PROMPT: ${{ inputs.custom-prompt }}
+        SYSTEM_PROMPT: ${{ inputs.system-prompt }}
       run: |
         set -euo pipefail
         if [ -z "${OLLAMA_API_KEY}" ]; then

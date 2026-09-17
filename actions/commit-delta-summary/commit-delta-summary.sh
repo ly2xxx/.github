@@ -3,20 +3,25 @@
 #
 #   commit-delta-summary.sh <base> <head> <outfile>
 #
-# Env: OLLAMA_API_KEY (required), OLLAMA_MODEL, MAX_DIFF_CHARS, OLLAMA_HOST.
+# Env: OLLAMA_API_KEY (required), OLLAMA_MODEL, MAX_DIFF_CHARS, OLLAMA_HOST,
+#      CUSTOM_PROMPT, SYSTEM_PROMPT.
 #
 # Lives beside action.yml so it travels with the composite action -- callers do
 # not need a copy in their own repo. That is the whole point of packaging it as
 # an action rather than a bare workflow.
 set -euo pipefail
 
-base="${1:?usage: commit-delta-summary.sh <base> <head> <outfile>}"
+base="${1:?usage: commit-delta-summary.sh <base> <head> <outfile> [custom_prompt] [system_prompt]}"
 head_rev="${2:?}"
 outfile="${3:?}"
+custom_prompt_arg="${4:-}"
+system_prompt_arg="${5:-}"
 
-MODEL="${OLLAMA_MODEL:-gpt-oss:120b-cloud}"
+MODEL="${OLLAMA_MODEL:-deepseek-v4-flash:cloud}"
 MAX_DIFF_CHARS="${MAX_DIFF_CHARS:-60000}"
 HOST="${OLLAMA_HOST:-https://ollama.com}"
+CUSTOM_PROMPT="${custom_prompt_arg:-${CUSTOM_PROMPT:-}}"
+SYSTEM_PROMPT="${system_prompt_arg:-${SYSTEM_PROMPT:-}}"
 
 : "${OLLAMA_API_KEY:?OLLAMA_API_KEY is required}"
 command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }
@@ -44,11 +49,14 @@ if [ "${#diff_block}" -gt "${MAX_DIFF_CHARS}" ]; then
   truncated=$'\n\n_(diff truncated at '"${MAX_DIFF_CHARS}"$' characters)_'
 fi
 
-read -r -d '' prompt <<PROMPT || true
+if [ -n "${SYSTEM_PROMPT}" ]; then
+  base_instruction="${SYSTEM_PROMPT}"
+else
+  read -r -d '' base_instruction <<'BASE_PROMPT' || true
 You are reviewing a code change. Write a concise summary in Markdown for a
 reviewer who has not seen the diff.
 
-Use exactly these sections:
+Use these sections (unless overridden or extended by additional instructions):
 ## What changed
 ## Why it matters
 ## Risks & things to check
@@ -56,6 +64,16 @@ Use exactly these sections:
 Be specific and factual. Cite file paths. Do not invent rationale that is not
 evident from the diff. If the change is trivial, say so briefly rather than
 padding.
+BASE_PROMPT
+fi
+
+extra_instructions=""
+if [ -n "${CUSTOM_PROMPT}" ]; then
+  extra_instructions=$'\n\nAdditional instructions:\n'"${CUSTOM_PROMPT}"
+fi
+
+read -r -d '' prompt <<PROMPT || true
+${base_instruction}${extra_instructions}
 
 Commits:
 ${log_block}

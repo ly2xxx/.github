@@ -72,6 +72,8 @@ jobs:
 | `max-diff-chars` | `60000` | diff is truncated beyond this, with a note |
 | `outfile` | `commit-delta-summary.md` | |
 | `ollama-api-key` | — | empty ⇒ skip cleanly, never fail the build |
+| `custom-prompt` | — | additional instructions appended to the base prompt |
+| `system-prompt` | — | overrides the default base prompt instructions |
 
 Outputs: `summary-file`, `skipped`.
 
