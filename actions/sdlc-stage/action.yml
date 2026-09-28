@@ -7,6 +7,7 @@ author: ly2xxx
 #   stage    write intent.md, spec.md or plan.md and push it to the feature branch
 #   freeze   tag the approved documents as sdlc/<feature>/approved and hand the
 #            plan to the builder (step 4)
+#   wait     step 4's pause: poll until build-log.md logs every phase
 #   verify   check the built branch against the approved plan's phases (scope,
 #            frozen files, unchanged documents, each phase's Verify commands, the
 #            whole test suite); with a phase and a base, one phase branch
@@ -17,7 +18,7 @@ author: ly2xxx
 
 inputs:
   command:
-    description: resolve, stage, freeze, verify, review or pr.
+    description: resolve, stage, freeze, wait, verify, review or pr.
     required: true
   stage:
     description: For command stage - intent, spec or plan.
@@ -47,6 +48,10 @@ inputs:
     description: For freeze - who builds the plan, claude or human. Only changes the hand-off instructions.
     required: false
     default: claude
+  build-wait-minutes:
+    description: For freeze and wait - how long step 4 waits for the build before the run stops. 0 = don't wait.
+    required: false
+    default: "0"
   start:
     description: For resolve - auto, intent, spec, plan or build.
     required: false
@@ -121,6 +126,9 @@ outputs:
   passed:
     description: verify - true when every check passed.
     value: ${{ steps.run.outputs.passed }}
+  built:
+    description: wait - true when build-log.md logs every phase.
+    value: ${{ steps.run.outputs.built }}
   tag:
     description: freeze - the tag on the approved documents.
     value: ${{ steps.run.outputs.tag }}
@@ -150,6 +158,7 @@ runs:
         SDLC_START: ${{ inputs.start }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}
+        BUILD_WAIT_MINUTES: ${{ inputs.build-wait-minutes }}
         BASE_REF: ${{ inputs.base }}
         FEATURES_DIR: ${{ inputs.features-dir }}
         OLLAMA_MODEL: ${{ inputs.model }}
@@ -172,10 +181,11 @@ runs:
             if [ -z "$OLLAMA_API_KEY" ]; then echo "::error::The stage command needs ollama-api-key."; exit 1; fi
             python3 "$script" stage "$STAGE" ;;
           freeze) python3 "$script" freeze ;;
+          wait) python3 "$script" wait ;;
           verify) python3 "$script" verify ${SDLC_PHASE:+--phase "$SDLC_PHASE"} ${REPORT:+--report "$REPORT"} ;;
           review)
             if [ -z "$OLLAMA_API_KEY" ]; then echo "::error::The review command needs ollama-api-key."; exit 1; fi
             python3 "$script" review ${REPORT:+--report "$REPORT"} ;;
           pr) python3 "$script" pr ${REPORT:+--report "$REPORT"} ${REVIEW:+--review "$REVIEW"} ;;
-          *) echo "::error::command must be resolve, stage, freeze, verify, review or pr"; exit 1 ;;
+          *) echo "::error::command must be resolve, stage, freeze, wait, verify, review or pr"; exit 1 ;;
         esac

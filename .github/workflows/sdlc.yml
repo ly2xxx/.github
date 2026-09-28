@@ -1,29 +1,29 @@
 name: SDLC Pipeline (reusable)
 
-# One feature, from a one-line idea to a pull request, in two runs:
+# One feature, from a one-line idea to a pull request, in one run and one line:
 #
-#   design run  1 · intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋ → 4 · ⏸ hand off to the builder
-#   build run   5 · verify → 5 · Ollama review → 6 · ✋ open the pull request
+#   resolve → 1 · intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋ → 4 · ⏸ hand off and wait
+#           → 5 · verify → 5 · Ollama review → 6 · ✋ open the pull request
 #
-# Ollama Cloud writes the documents. Step 4 tags them as sdlc/<feature>/approved
-# and ends the run. The builder (Claude Code in real work, a person for teaching
-# or demos) then builds plan.md phase by phase, and starts the build run with
-# the feature's name. Verification is deterministic and fails if the approved
-# documents changed; Ollama's review is advisory and goes into the pull request.
+# Ollama Cloud writes the documents. Step 4 tags them as sdlc/<feature>/approved,
+# writes the hand-off for the builder (Claude Code in real work, a person for
+# teaching or demos), then waits, for up to build-wait-minutes, until
+# build-log.md on the feature branch logs every phase of the plan. The same run
+# then verifies the build (deterministic, and fails if the approved documents
+# changed), has Ollama review it (advisory), and opens the pull request. The wait
+# is a job polling the branch, not an environment gate, so it works in private
+# repositories too.
 #
 # ✋ jobs wait on the review environment when it has required reviewers (public
 # repositories, or paid plans). Without them the run carries on by itself.
 #
-# The builder hands back by starting the build run (Run workflow with the
-# feature), or just by merging its phase pull requests: when a merged
-# phase/<feature>/<n> pull request leaves build-log.md logging every phase, the
-# build run starts by itself. That is how Claude Code hands back, since its
-# GitHub access can merge but can't start workflow runs. The caller triggers on
-# `pull_request: types: [closed], branches: ["feature/**"]` for that.
+# If step 4 stops waiting (or build-wait-minutes is 0), the run ends there, and
+# running it again with the feature and start `build` does steps 5 and 6. Steps
+# a run doesn't need show as skipped, still in the same line.
 #
 # An idea can also arrive as an issue: the caller triggers on `issues: types:
 # [labeled]` and passes the issue title as the idea. A line `feature: <name>` in
-# the issue body revises that feature instead of starting a new one.
+# the issue body revises that feature; `start: build` with it runs steps 5-6.
 #
 # Called from a repository's own workflow; ly2xxx/interview-playground has one:
 #   jobs:
@@ -82,6 +82,10 @@ on:
         description: The branch features start from and go into. Empty = the repository's default branch.
         type: string
         default: ""
+      build-wait-minutes:
+        description: How long step 4 waits for the build (at most 350). 0 ends the run at the hand-off.
+        type: number
+        default: 180
     secrets:
       OLLAMA_API_KEY:
         required: false
@@ -152,6 +156,7 @@ jobs:
   review-intent:
     name: "✋ Review intent.md"
     needs: [resolve, intent]
+    if: needs.intent.result == 'success'
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -183,6 +188,7 @@ jobs:
   review-spec:
     name: "✋ Review spec.md"
     needs: [resolve, spec]
+    if: ${{ !cancelled() && needs.spec.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -215,6 +221,7 @@ jobs:
   review-plan:
     name: "✋ Review plan.md"
     needs: [resolve, plan]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -222,12 +229,15 @@ jobs:
 
   # ------------------------------------------------------------------ step 4: the builder
   handoff:
-    name: "4 · ⏸ Hand off to the builder"
+    name: "4 · ⏸ Hand off and wait for the build"
     needs: [resolve, review-plan]
     if: ${{ !cancelled() && !failure() && needs.resolve.outputs.mode == 'design' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     permissions:
       contents: write       # pushes the sdlc/<feature>/approved tag
+    outputs:
+      built: ${{ steps.wait.outputs.built }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -239,12 +249,21 @@ jobs:
           features-dir: ${{ inputs.features-dir }}
           builder: ${{ inputs.builder }}
           test-command: ${{ inputs.test-command }}
+          build-wait-minutes: ${{ inputs.build-wait-minutes }}
+      - id: wait
+        uses: ly2xxx/.github/actions/sdlc-stage@main
+        with:
+          command: wait
+          feature: ${{ needs.resolve.outputs.feature }}
+          features-dir: ${{ inputs.features-dir }}
+          build-wait-minutes: ${{ inputs.build-wait-minutes }}
 
   # ------------------------------------------------------------------ build run: checks, Ollama, PR
   verify:
     name: "5 · Verify the build"
-    needs: resolve
-    if: needs.resolve.outputs.mode == 'build'
+    needs: [resolve, handoff]
+    # A build run (start: build) skips steps 1-4; a design run gets here once step 4 saw the build.
+    if: ${{ !cancelled() && !failure() && (needs.resolve.outputs.mode == 'build' || needs.handoff.outputs.built == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

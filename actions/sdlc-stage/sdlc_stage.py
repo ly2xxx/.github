@@ -7,6 +7,7 @@ decide whether it is done.
     sdlc_stage.py stage NAME     write intent.md, spec.md or plan.md with Ollama Cloud
                                  and push it to the feature branch
     sdlc_stage.py freeze         tag the approved documents and hand the plan to the builder
+    sdlc_stage.py wait           wait until build-log.md on the feature branch logs every phase
     sdlc_stage.py verify         check the built branch against the approved plan's phases
     sdlc_stage.py review         Ollama reviews the build against the spec (advisory)
     sdlc_stage.py pr             open the pull request for the feature branch
@@ -341,11 +342,14 @@ def new_feature_name(features_dir, idea):
 PHASE_BRANCH = re.compile(r"phase/(?P<feature>[a-z0-9][a-z0-9-]{0,63})/(?P<phase>[A-Za-z0-9._-]+)")
 
 
-def logged_phases(folder):
-    """The phase ids build-log.md has a `## Phase <id>: ...` section for."""
-    log = folder / "build-log.md"
-    text = log.read_text(encoding="utf-8") if log.exists() else ""
+def logged_ids(text):
+    """The phase ids a build log has a `## Phase <id>: ...` section for."""
     return set(re.findall(r"^## Phase ([^\s:]+)", text, flags=re.MULTILINE))
+
+
+def logged_phases(folder):
+    log = folder / "build-log.md"
+    return logged_ids(log.read_text(encoding="utf-8") if log.exists() else "")
 
 
 def resolve(args):
@@ -660,10 +664,17 @@ def handoff(feature, branch, tag, sha, phases, builder):
                   f'git add -A && git commit -m "sdlc({feature}): phase <n>" && git push', "```", "",
                   f"Or push each phase to `phase/{feature}/<n>` and open a pull request into `{branch}`, "
                   "where the phase check runs on it.", ""]
-    lines += [f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
-              f"`{feature}` (start `auto` or `build`). Merging a `phase/{feature}/<n>` pull request does it "
-              "by itself once `build-log.md` logs every phase, which is how Claude Code hands back. The "
-              "build run verifies the build, has Ollama review it, and opens the pull request."]
+    minutes = int(env("BUILD_WAIT_MINUTES", "0") or 0)
+    if minutes > 0:
+        lines += [f"**Hand back.** This job now waits, for up to {minutes} minutes, until `build-log.md` on "
+                  f"`{branch}` has a `## Phase <id>: ...` section for every phase. Then this same run carries "
+                  "on: step 5 verifies the build and Ollama reviews it, and step 6 opens the pull request. "
+                  f"If it stops waiting first, run **SDLC Pipeline** with feature `{feature}` and start "
+                  "`build` once the build is done."]
+    else:
+        lines += [f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
+                  f"`{feature}` (start `auto` or `build`). That run verifies the build, has Ollama review it, "
+                  "and opens the pull request."]
     return "\n".join(lines)
 
 
@@ -693,6 +704,50 @@ def freeze(args):
     print(f"Tagged {tag} at {sha}. Waiting for {builder} to build {branch}.")
     step_summary(handoff(feature, branch, tag, sha, parse_phases(plan), builder))
     set_output(tag=tag, sha=sha)
+
+
+# ---------------------------------------------------------------- wait
+
+def wait(args):
+    """Step 4's pause, inside the run: poll the feature branch until build-log.md
+    logs every phase of the approved plan, so the same run goes on to verify
+    and open the pull request. Needs no environment gate, so it works in a
+    private repository too."""
+    features_dir = env("FEATURES_DIR", "sdlc/features").strip("/")
+    feature = env("SDLC_FEATURE") or fail("SDLC_FEATURE is not set")
+    minutes = int(env("BUILD_WAIT_MINUTES", "0") or 0)
+    if minutes <= 0:
+        print("Not waiting for the build (build-wait-minutes is 0): this run ends at the hand-off.")
+        set_output(built="false")
+        return
+    branch, folder = branch_for(feature), Path(features_dir, feature)
+    tag = approved_ref(feature) or fail(f"{approved_tag(feature)} doesn't exist: freeze the design first.")
+    planned = [p["id"] for p in parse_phases(approved_text(tag, folder / "plan.md"))]
+    log_path = (folder / "build-log.md").as_posix()
+    interval, deadline, last = int(env("BUILD_POLL_SECONDS", "30")), time.monotonic() + minutes * 60, None
+    print(f"Waiting up to {minutes} minutes for {branch} to log phase(s) {', '.join(planned)} in build-log.md.",
+          flush=True)
+    while True:
+        git("fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", check=False)
+        log = blob(f"origin/{branch}", log_path)
+        todo = [i for i in planned if i not in logged_ids(log.decode("utf-8") if log else "")]
+        if todo != last:
+            head = git("rev-parse", "--short", f"origin/{branch}", check=False)
+            print(f"{time.strftime('%H:%M:%S')} {branch}@{head}: "
+                  + (f"still to build: phase {', '.join(todo)}" if todo else "every phase is logged"), flush=True)
+            last = todo
+        if not todo:
+            step_summary(f"## ▶ Built\n\n`build-log.md` on `{branch}` logs every phase "
+                         f"({', '.join(planned)}). Carrying on with step 5.")
+            set_output(built="true")
+            return
+        if time.monotonic() > deadline:
+            step_summary(f"## ⏸ Stopped waiting after {minutes} minutes\n\nStill to build: phase "
+                         f"{', '.join(todo)}. When the build is done, run **SDLC Pipeline** with feature "
+                         f"`{feature}` and start `build`, or open an `sdlc` issue with `feature: {feature}` "
+                         "and `start: build` in its body.")
+            fail(f"No complete build within {minutes} minutes (still to build: phase {', '.join(todo)}).")
+        time.sleep(interval)
 
 
 # ---------------------------------------------------------------- review
@@ -800,6 +855,7 @@ def main():
     s = sub.add_parser("stage")
     s.add_argument("name", choices=STAGES)
     sub.add_parser("freeze")
+    sub.add_parser("wait")
     v = sub.add_parser("verify")
     v.add_argument("--feature")
     v.add_argument("--phase", help="check one phase: uncommitted changes, or with --base its phase branch")
@@ -812,8 +868,8 @@ def main():
     p.add_argument("--report")
     p.add_argument("--review")
     args = ap.parse_args()
-    {"resolve": resolve, "stage": stage, "freeze": freeze, "verify": verify, "review": review,
-     "pr": pr}[args.cmd](args)
+    {"resolve": resolve, "stage": stage, "freeze": freeze, "wait": wait, "verify": verify,
+     "review": review, "pr": pr}[args.cmd](args)
 
 
 if __name__ == "__main__":

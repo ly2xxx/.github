@@ -5,12 +5,12 @@ design, a builder writes the code, and deterministic checks decide whether it
 is done.
 
 ```text
-design run   1 · Ollama writes intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋ → 4 · ⏸ hand off to the builder
-                                                                          │
-   the builder (Claude Code, or a person) builds plan.md phase by phase ◀─┘
-   each phase: phase/<feature>/<n> → pull request into feature/<feature> → Phase check → merge
-                                                                          │
-build run    5 · verify → 5 · Ollama reviews the build → 6 · ✋ open the pull request ◀─┘
+one run, one line
+resolve → 1 · Ollama writes intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋
+        → 4 · ⏸ hand off and wait for the build      the builder (Claude Code, or a person) builds
+        → 5 · verify → 5 · Ollama reviews the build     plan.md phase by phase meanwhile: each phase on
+        → 6 · ✋ open the pull request                   phase/<feature>/<n> → PR into feature/<feature>
+                                                          → Phase check → merge
 ```
 
 | Piece | What it is |
@@ -22,22 +22,20 @@ build run    5 · verify → 5 · Ollama reviews the build → 6 · ✋ open the
 
 ## How the run pauses at step 4
 
-Step 4 tags the approved `intent.md`, `spec.md` and `plan.md` as
-`sdlc/<feature>/approved`, writes the hand-off instructions for the chosen
-builder into the run summary, and ends the run. That works the same in a
-private repository, where a ✋ job can't wait, as in a public one. The builder
-hands back by running the workflow again with just the feature name: once all
-three documents exist, `start: auto` means the build run.
+Step 4 is one job. It tags the approved `intent.md`, `spec.md` and `plan.md` as
+`sdlc/<feature>/approved` and writes the hand-off for the chosen builder into
+the run summary. Then it waits: it polls the feature branch until
+`build-log.md` has a `## Phase <id>: ...` section for every phase of the
+approved plan, for up to `build-wait-minutes` (default 180, at most 350 because
+a hosted job runs for 6 hours at most). The same run then carries on to verify,
+the Ollama review and the pull request. It is a polling job, not an
+environment gate, so it pauses the same way in a private repository. It holds a
+runner while it waits, so the wait counts towards Actions minutes.
 
-Merging phase pull requests hands back too. When a pull request from
-`phase/<feature>/<n>` into `feature/<feature>` is merged and `build-log.md` logs
-every phase of the approved plan (`## Phase <id>: ...`), the build run starts
-by itself. That is how Claude Code hands back: its GitHub access can push,
-open and merge pull requests, but can't start workflow runs. It also can't
-start a design run, so only a person can ask for a new plan. The caller's
-workflow needs `pull_request: types: [closed], branches: ["feature/**"]` next to
-`workflow_dispatch`, and a job condition that lets only merged `phase/`
-pull requests through.
+If step 4 stops waiting, the run ends there. Once the build is done, running the
+workflow again with the feature and start `build` does steps 5 and 6; steps
+that run doesn't need show as skipped, in the same line. With
+`build-wait-minutes: 0` every design run ends at the hand-off.
 
 ## Where an idea comes from
 
