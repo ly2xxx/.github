@@ -43,7 +43,9 @@ pull requests through.
 
 - **Run workflow**, with an idea (or with a feature, to redo a document).
 - **An issue labelled `sdlc`.** Its title is the idea. A line `feature: <name>`
-  in its body revises that feature instead of starting a new one. Only people
+  in its body revises that feature instead of starting a new one; add
+  `start: build` (or `spec`, `plan`) to run that feature from that stage
+  instead, for example to verify it and open the pull request again. Only people
   with triage access can add labels, so this is safe in public repositories.
   It also lets Claude Code start a design run, since it can open issues but
   can't start workflow runs. The caller triggers on `issues: types: [labeled]`.
@@ -66,7 +68,9 @@ pull requests through.
 `ly2xxx/interview-playground` is the reference caller: `.github/workflows/sdlc.yml`,
 `.github/workflows/sdlc-phase.yml`, `.claude/skills/sdlc-build/SKILL.md` and
 `sdlc/README.md`. You need an `OLLAMA_API_KEY` secret. Also turn on "Allow GitHub
-Actions to create and approve pull requests", or add an `SDLC_PR_TOKEN` secret.
+Actions to create and approve pull requests", or add an `SDLC_PR_TOKEN` secret. Without
+either, step 6 fails but prints the pull request's title and body in its log, so
+the builder can open exactly that pull request itself.
 
 Run one phase's check locally:
 

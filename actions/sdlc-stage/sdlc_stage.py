@@ -357,13 +357,21 @@ def resolve(args):
     # approved plan, this is the build run. That needs nothing from the builder
     # but the merge, so a builder that can't start workflow runs (Claude Code's
     # GitHub access) hands back too.
-    # An issue labelled for the pipeline starts a design run: its title is the
-    # idea, and a `feature: <name>` line in its body revises that feature.
-    if idea and not feature and env("SDLC_ISSUE_BODY"):
-        m = re.search(r"^\s*feature:\s*([a-z0-9][a-z0-9-]{0,63})\s*$", env("SDLC_ISSUE_BODY"), flags=re.MULTILINE)
+    # An issue labelled for the pipeline starts a run: its title is the idea, a
+    # `feature: <name>` line in its body revises that feature, and a
+    # `start: <stage>` line with it runs that feature from the stage instead
+    # (`start: build` verifies it and opens the pull request again).
+    body = env("SDLC_ISSUE_BODY")
+    if idea and not feature and body:
+        m = re.search(r"^\s*feature:\s*([a-z0-9][a-z0-9-]{0,63})\s*$", body, flags=re.MULTILINE)
         if m:
             feature = m.group(1)
-            print(f"The issue names feature {feature}: revising it.")
+            s = re.search(r"^\s*start:\s*(spec|plan|build)\s*$", body, flags=re.MULTILINE)
+            if s:
+                idea, start = "", s.group(1)
+                print(f"The issue asks for feature {feature} from {start}.")
+            else:
+                print(f"The issue names feature {feature}: revising it.")
     merged = env("SDLC_MERGED_PHASE")
     if merged and not (feature or idea):
         m = PHASE_BRANCH.fullmatch(merged) or fail(f"{merged} isn't a phase/<feature>/<phase> branch.")
@@ -719,6 +727,7 @@ def review(args):
                      "merge but doesn't gate it; the verification above does.", "", text, ""])
     if args.report:
         Path(args.report).write_text(out, encoding="utf-8")
+    print(out)
     step_summary(out)
     set_output(path=args.report or "")
 
@@ -767,9 +776,16 @@ def pr(args):
         cmd = ["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body_text]
         r = subprocess.run([*cmd, *([] if passed else ["--draft"])], capture_output=True, text=True)
         if r.returncode:
-            hint = (" Allow it under Settings → Actions → General → Workflow permissions (\"Allow GitHub Actions "
-                    "to create and approve pull requests\"), or add an SDLC_PR_TOKEN secret."
-                    if "not permitted" in r.stderr else "")
+            hint = ""
+            if "not permitted" in r.stderr:
+                hint = (" Allow it under Settings → Actions → General → Workflow permissions (\"Allow GitHub Actions "
+                        "to create and approve pull requests\"), or add an SDLC_PR_TOKEN secret. Until then the "
+                        "builder can open it: the title and body are in this job's log and summary.")
+                # The pull request this run would have opened, so a builder that can open
+                # pull requests but not change the setting can open exactly this one.
+                print(f"----- pull request: {branch} -> {base} -----\n{title}\n----- body -----\n{body_text}\n"
+                      "----- end of pull request -----", flush=True)
+                step_summary(f"## The pull request to open\n\n`{branch}` → `{base}`: **{title}**\n\n---\n\n{body_text}")
             fail(f"gh pr create exited {r.returncode}: {r.stderr.strip()[-1000:]}{hint}")
         url = r.stdout.strip()
     print(f"Pull request: {url}")
