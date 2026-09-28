@@ -29,6 +29,22 @@ private repository, where a ✋ job can't wait, as in a public one. The builder
 hands back by running the workflow again with just the feature name: once all
 three documents exist, `start: auto` means the build run.
 
+A builder that can push but can't start workflow runs, which is how Claude
+Code's GitHub access works, pushes a request tag instead:
+
+| Tag | Starts |
+| :-- | :-- |
+| `sdlc/<feature>/run-build` | the build run: verify, Ollama review, pull request |
+| `sdlc/<feature>/run-plan` | the design run from the plan stage (a new plan, frozen again) |
+| `sdlc/<feature>/run-spec` | the design run from the spec stage |
+
+```bash
+git tag -f sdlc/<feature>/run-build origin/feature/<feature>
+git push -f origin refs/tags/sdlc/<feature>/run-build
+```
+
+The caller's workflow needs `push: tags: ["sdlc/*/run-*"]` next to `workflow_dispatch`.
+
 ## What keeps the builder honest
 
 - **The plan it is checked against is the approved one.** `verify` reads
