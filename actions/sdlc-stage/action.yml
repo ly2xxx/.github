@@ -45,7 +45,7 @@ inputs:
     required: false
     default: ""
   builder:
-    description: For freeze - who builds the plan, claude or human. Only changes the hand-off instructions.
+    description: For freeze - who builds the plan, claude or human. A label in the hand-off and the tag; the instructions are the same.
     required: false
     default: claude
   build-wait-minutes:
