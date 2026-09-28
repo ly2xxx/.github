@@ -14,10 +14,12 @@ name: SDLC Pipeline (reusable)
 # ✋ jobs wait on the review environment when it has required reviewers (public
 # repositories, or paid plans). Without them the run carries on by itself.
 #
-# A builder that can push but can't start workflow runs (Claude Code's GitHub
-# access) asks for one with a tag: sdlc/<feature>/run-build hands a built feature
-# back, sdlc/<feature>/run-plan or run-spec redoes the design from that stage.
-# The caller triggers on `push: tags: ["sdlc/*/run-*"]`.
+# The builder hands back by starting the build run (Run workflow with the
+# feature), or just by merging its phase pull requests: when a merged
+# phase/<feature>/<n> pull request leaves build-log.md logging every phase, the
+# build run starts by itself. That is how Claude Code hands back, since its
+# GitHub access can merge but can't start workflow runs. The caller triggers on
+# `pull_request: types: [closed], branches: ["feature/**"]` for that.
 #
 # Called from a repository's own workflow; ly2xxx/interview-playground has one:
 #   jobs:
@@ -93,6 +95,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      mode: ${{ steps.r.outputs.mode }}
       feature: ${{ steps.r.outputs.feature }}
       branch: ${{ steps.r.outputs.branch }}
       base: ${{ steps.r.outputs.base }}
@@ -103,6 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           fetch-depth: 0
       - id: r
         uses: ly2xxx/.github/actions/sdlc-stage@main
@@ -111,7 +115,7 @@ jobs:
           idea: ${{ inputs.idea }}
           feature: ${{ inputs.feature }}
           start: ${{ inputs.start }}
-          request: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          merged-phase: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged && github.head_ref || '' }}
           base: ${{ inputs.base || github.event.repository.default_branch }}
           features-dir: ${{ inputs.features-dir }}
 
@@ -215,7 +219,7 @@ jobs:
   handoff:
     name: "4 · ⏸ Hand off to the builder"
     needs: [resolve, review-plan]
-    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.design == 'true' }}
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.mode == 'design' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write       # pushes the sdlc/<feature>/approved tag
@@ -235,7 +239,7 @@ jobs:
   verify:
     name: "5 · Verify the build"
     needs: resolve
-    if: needs.resolve.outputs.design == 'false'
+    if: needs.resolve.outputs.mode == 'build'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

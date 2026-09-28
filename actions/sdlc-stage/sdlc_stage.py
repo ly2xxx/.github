@@ -338,21 +338,42 @@ def new_feature_name(features_dir, idea):
 
 # ---------------------------------------------------------------- resolve
 
-REQUEST = re.compile(r"sdlc/(?P<feature>[a-z0-9][a-z0-9-]{0,63})/run-(?P<start>spec|plan|build)")
+PHASE_BRANCH = re.compile(r"phase/(?P<feature>[a-z0-9][a-z0-9-]{0,63})/(?P<phase>[A-Za-z0-9._-]+)")
+
+
+def logged_phases(folder):
+    """The phase ids build-log.md has a `## Phase <id>: ...` section for."""
+    log = folder / "build-log.md"
+    text = log.read_text(encoding="utf-8") if log.exists() else ""
+    return set(re.findall(r"^## Phase ([^\s:]+)", text, flags=re.MULTILINE))
 
 
 def resolve(args):
     idea, start = env("SDLC_IDEA"), env("SDLC_START", "auto")
     features_dir = env("FEATURES_DIR", "sdlc/features").strip("/")
     feature = env("SDLC_FEATURE")
-    # A pushed tag sdlc/<feature>/run-<stage> asks for a run the way Run workflow
-    # does, for builders (like Claude Code) that can push but can't dispatch.
-    request = env("SDLC_REQUEST")
-    if request and not (feature or idea):
-        m = REQUEST.fullmatch(request) or fail(
-            f"The request tag {request} isn't sdlc/<feature>/run-spec, run-plan or run-build.")
-        feature, start = m.group("feature"), m.group("start")
-        print(f"Requested by the tag {request}.")
+    # A merged pull request from phase/<feature>/<n> into the feature branch is
+    # the builder handing back: once build-log.md logs every phase of the
+    # approved plan, this is the build run. That needs nothing from the builder
+    # but the merge, so a builder that can't start workflow runs (Claude Code's
+    # GitHub access) hands back too.
+    merged = env("SDLC_MERGED_PHASE")
+    if merged and not (feature or idea):
+        m = PHASE_BRANCH.fullmatch(merged) or fail(f"{merged} isn't a phase/<feature>/<phase> branch.")
+        feature, start = m.group("feature"), "build"
+        branch = branch_for(feature)
+        use_feature_branch(branch)
+        folder = Path(features_dir, feature)
+        planned = [p["id"] for p in parse_phases(approved_text(approved_ref(feature), folder / "plan.md"))]
+        todo = [i for i in planned if i not in logged_phases(folder)]
+        if todo:
+            print(f"{merged} is merged. Still to build (not in build-log.md): phase {', '.join(todo)}.")
+            step_summary(f"**Feature** `{feature}`: `{merged}` is merged. The build run starts when build-log.md "
+                         f"logs every phase; still to build: phase {', '.join(todo)}.")
+            set_output(feature=feature, branch=branch, start="build", base=env("BASE_REF"), mode="none",
+                       design="false", **{s: "false" for s in STAGES})
+            return
+        print(f"{merged} is merged and build-log.md logs every phase: handing back for the build run.")
     if start not in ("auto", "intent", "spec", "plan", "build"):
         fail(f"Unknown start stage: {start}")
     if idea and start not in ("auto", "intent"):
@@ -389,7 +410,7 @@ def resolve(args):
     # design: this run writes documents and ends by handing the plan to the builder.
     # Otherwise it is the build run: verify, review and open the pull request.
     set_output(feature=feature, branch=branch, start=start, base=env("BASE_REF"),
-               design=str(start != "build").lower(),
+               mode="design" if start != "build" else "build", design=str(start != "build").lower(),
                **{s: str(runs[s]).lower() for s in STAGES})
 
 
@@ -614,9 +635,7 @@ def handoff(feature, branch, tag, sha, phases, builder):
     if builder == "claude":
         lines += [f"**Hand it to Claude Code.** In a Claude Code session on `{env('GITHUB_REPOSITORY')}`, say:", "",
                   f"> Use the sdlc-build skill to build feature `{feature}`: each phase on `phase/{feature}/<n>` "
-                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", "",
-                  "Claude Code hands back by pushing the tag "
-                  f"`sdlc/{feature}/run-build` (it can push but can't start workflow runs).", ""]
+                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", ""]
     else:
         lines += ["**Build it yourself**, one phase at a time:", "", "```bash",
                   f"git fetch origin && git switch {branch}",
@@ -627,8 +646,9 @@ def handoff(feature, branch, tag, sha, phases, builder):
                   f"Or push each phase to `phase/{feature}/<n>` and open a pull request into `{branch}`, "
                   "where the phase check runs on it.", ""]
     lines += [f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
-              f"`{feature}` (start `auto` or `build`), or push the tag `sdlc/{feature}/run-build`. That run "
-              "verifies the build, has Ollama review it, and opens the pull request."]
+              f"`{feature}` (start `auto` or `build`). Merging a `phase/{feature}/<n>` pull request does it "
+              "by itself once `build-log.md` logs every phase, which is how Claude Code hands back. The "
+              "build run verifies the build, has Ollama review it, and opens the pull request."]
     return "\n".join(lines)
 
 

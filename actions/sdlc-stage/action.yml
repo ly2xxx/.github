@@ -27,8 +27,8 @@ inputs:
     description: One line. Drafts intent.md for a new feature, or revises the named feature's intent.
     required: false
     default: ""
-  request:
-    description: For resolve - a pushed tag sdlc/<feature>/run-spec, run-plan or run-build, used when idea and feature are empty.
+  merged-phase:
+    description: For resolve - the head branch (phase/<feature>/<n>) of a merged pull request, used when idea and feature are empty. Starts the build run once build-log.md logs every phase.
     required: false
     default: ""
   feature:
@@ -123,6 +123,9 @@ outputs:
   design:
     description: resolve - true when this run writes documents, false when it verifies a build.
     value: ${{ steps.run.outputs.design }}
+  mode:
+    description: resolve - design (write documents, hand off), build (verify, review, pull request) or none.
+    value: ${{ steps.run.outputs.mode }}
   pr:
     description: pr - URL of the pull request.
     value: ${{ steps.run.outputs.pr }}
@@ -138,7 +141,7 @@ runs:
         STAGE: ${{ inputs.stage }}
         SDLC_IDEA: ${{ inputs.idea }}
         SDLC_FEATURE: ${{ inputs.feature }}
-        SDLC_REQUEST: ${{ inputs.request }}
+        SDLC_MERGED_PHASE: ${{ inputs.merged-phase }}
         SDLC_START: ${{ inputs.start }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}
