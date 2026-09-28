@@ -49,7 +49,7 @@ on:
         type: string
         default: auto
       builder:
-        description: Who builds at step 4 - claude or human. Changes only the hand-off instructions.
+        description: Who builds at step 4 - claude or human. A label only; every builder gets the same hand-off.
         type: string
         default: claude
       model:

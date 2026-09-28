@@ -359,8 +359,7 @@ def resolve(args):
     # A merged pull request from phase/<feature>/<n> into the feature branch is
     # the builder handing back: once build-log.md logs every phase of the
     # approved plan, this is the build run. That needs nothing from the builder
-    # but the merge, so a builder that can't start workflow runs (Claude Code's
-    # GitHub access) hands back too.
+    # but the merge, so a builder that can't start workflow runs hands back too.
     # An issue labelled for the pipeline starts a run: its title is the idea, a
     # `feature: <name>` line in its body revises that feature, and a
     # `start: <stage>` line with it runs that feature from the stage instead
@@ -651,19 +650,14 @@ def handoff(feature, branch, tag, sha, phases, builder):
     lines += [f"{i}. **Phase {p['id']}**: {p['title'].split(':', 1)[-1].strip()} "
               f"({', '.join(f'`{t}`' for t in p['targets'])})" for i, p in enumerate(phases, 1)]
     lines.append("")
-    if builder == "claude":
-        lines += [f"**Hand it to Claude Code.** In a Claude Code session on `{env('GITHUB_REPOSITORY')}`, say:", "",
-                  f"> Use the sdlc-build skill to build feature `{feature}`: each phase on `phase/{feature}/<n>` "
-                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", ""]
-    else:
-        lines += ["**Build it yourself**, one phase at a time:", "", "```bash",
-                  f"git fetch origin && git switch {branch}",
-                  f"curl -sSfLo /tmp/sdlc_stage.py {LOCAL_CHECK}",
-                  "# build phase <n>: change only its targets, then check it",
-                  f'python /tmp/sdlc_stage.py verify --feature {feature} --phase <n> --test-command "{test_command}"',
-                  f'git add -A && git commit -m "sdlc({feature}): phase <n>" && git push', "```", "",
-                  f"Or push each phase to `phase/{feature}/<n>` and open a pull request into `{branch}`, "
-                  "where the phase check runs on it.", ""]
+    log = Path(env("FEATURES_DIR", "sdlc/features").strip("/"), feature, "build-log.md").as_posix()
+    lines += ["**Build it**, one phase at a time, changing only that phase's targets:", "", "```bash",
+              f"git fetch origin && git switch -c phase/{feature}/<n> origin/{branch}",
+              f"curl -sSfLo /tmp/sdlc_stage.py {LOCAL_CHECK}",
+              f'python /tmp/sdlc_stage.py verify --feature {feature} --phase <n> --test-command "{test_command}"',
+              "```", "",
+              f"Add a `## Phase <n>: <title>` section to `{log}` for each phase. Then open a pull request "
+              f"into `{branch}`, where the phase check runs, and merge it; or push straight to `{branch}`.", ""]
     minutes = int(env("BUILD_WAIT_MINUTES", "0") or 0)
     if minutes > 0:
         lines += [f"**Hand back.** This job now waits, for up to {minutes} minutes, until `build-log.md` on "
