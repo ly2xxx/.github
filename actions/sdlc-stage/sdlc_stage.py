@@ -357,6 +357,13 @@ def resolve(args):
     # approved plan, this is the build run. That needs nothing from the builder
     # but the merge, so a builder that can't start workflow runs (Claude Code's
     # GitHub access) hands back too.
+    # An issue labelled for the pipeline starts a design run: its title is the
+    # idea, and a `feature: <name>` line in its body revises that feature.
+    if idea and not feature and env("SDLC_ISSUE_BODY"):
+        m = re.search(r"^\s*feature:\s*([a-z0-9][a-z0-9-]{0,63})\s*$", env("SDLC_ISSUE_BODY"), flags=re.MULTILINE)
+        if m:
+            feature = m.group(1)
+            print(f"The issue names feature {feature}: revising it.")
     merged = env("SDLC_MERGED_PHASE")
     if merged and not (feature or idea):
         m = PHASE_BRANCH.fullmatch(merged) or fail(f"{merged} isn't a phase/<feature>/<phase> branch.")

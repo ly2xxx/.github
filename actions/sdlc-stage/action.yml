@@ -27,6 +27,10 @@ inputs:
     description: One line. Drafts intent.md for a new feature, or revises the named feature's intent.
     required: false
     default: ""
+  issue-body:
+    description: "For resolve - the body of the issue that started the run. A line like \"feature: 001-name\" revises that feature."
+    required: false
+    default: ""
   merged-phase:
     description: For resolve - the head branch (phase/<feature>/<n>) of a merged pull request, used when idea and feature are empty. Starts the build run once build-log.md logs every phase.
     required: false
@@ -142,6 +146,7 @@ runs:
         SDLC_IDEA: ${{ inputs.idea }}
         SDLC_FEATURE: ${{ inputs.feature }}
         SDLC_MERGED_PHASE: ${{ inputs.merged-phase }}
+        SDLC_ISSUE_BODY: ${{ inputs.issue-body }}
         SDLC_START: ${{ inputs.start }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}

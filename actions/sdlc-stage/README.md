@@ -39,6 +39,15 @@ workflow needs `pull_request: types: [closed], branches: ["feature/**"]` next to
 `workflow_dispatch`, and a job condition that lets only merged `phase/`
 pull requests through.
 
+## Where an idea comes from
+
+- **Run workflow**, with an idea (or with a feature, to redo a document).
+- **An issue labelled `sdlc`.** Its title is the idea. A line `feature: <name>`
+  in its body revises that feature instead of starting a new one. Only people
+  with triage access can add labels, so this is safe in public repositories.
+  It also lets Claude Code start a design run, since it can open issues but
+  can't start workflow runs. The caller triggers on `issues: types: [labeled]`.
+
 ## What keeps the builder honest
 
 - **The plan it is checked against is the approved one.** `verify` reads

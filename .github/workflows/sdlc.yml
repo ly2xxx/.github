@@ -21,6 +21,10 @@ name: SDLC Pipeline (reusable)
 # GitHub access can merge but can't start workflow runs. The caller triggers on
 # `pull_request: types: [closed], branches: ["feature/**"]` for that.
 #
+# An idea can also arrive as an issue: the caller triggers on `issues: types:
+# [labeled]` and passes the issue title as the idea. A line `feature: <name>` in
+# the issue body revises that feature instead of starting a new one.
+#
 # Called from a repository's own workflow; ly2xxx/interview-playground has one:
 #   jobs:
 #     sdlc:
@@ -116,6 +120,7 @@ jobs:
           feature: ${{ inputs.feature }}
           start: ${{ inputs.start }}
           merged-phase: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged && github.head_ref || '' }}
+          issue-body: ${{ github.event_name == 'issues' && github.event.issue.body || '' }}
           base: ${{ inputs.base || github.event.repository.default_branch }}
           features-dir: ${{ inputs.features-dir }}
 
