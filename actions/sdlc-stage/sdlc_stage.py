@@ -274,11 +274,18 @@ def remote_has(branch):
 
 
 def use_feature_branch(branch):
-    """Check out the feature branch, creating it from the current commit if new.
-    Called after the approval gate, so a person's edits on the branch are in."""
+    """Check out the feature branch, creating it if new from the base branch
+    (BASE_REF) or else the current commit. Called after the approval gate, so a
+    person's edits on the branch are in."""
     if remote_has(branch):
         git("fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
         git("checkout", "-q", "-B", branch, f"origin/{branch}")
+        return
+    base = env("BASE_REF")
+    if base:
+        git("fetch", "-q", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", check=False)
+    if base and git("rev-parse", "--verify", "-q", f"origin/{base}", check=False):
+        git("checkout", "-q", "-B", branch, f"origin/{base}")
     else:
         git("checkout", "-q", "-B", branch)
 
@@ -331,16 +338,27 @@ def new_feature_name(features_dir, idea):
 
 # ---------------------------------------------------------------- resolve
 
+REQUEST = re.compile(r"sdlc/(?P<feature>[a-z0-9][a-z0-9-]{0,63})/run-(?P<start>spec|plan|build)")
+
+
 def resolve(args):
     idea, start = env("SDLC_IDEA"), env("SDLC_START", "auto")
     features_dir = env("FEATURES_DIR", "sdlc/features").strip("/")
+    feature = env("SDLC_FEATURE")
+    # A pushed tag sdlc/<feature>/run-<stage> asks for a run the way Run workflow
+    # does, for builders (like Claude Code) that can push but can't dispatch.
+    request = env("SDLC_REQUEST")
+    if request and not (feature or idea):
+        m = REQUEST.fullmatch(request) or fail(
+            f"The request tag {request} isn't sdlc/<feature>/run-spec, run-plan or run-build.")
+        feature, start = m.group("feature"), m.group("start")
+        print(f"Requested by the tag {request}.")
     if start not in ("auto", "intent", "spec", "plan", "build"):
         fail(f"Unknown start stage: {start}")
     if idea and start not in ("auto", "intent"):
         fail("An idea starts at the intent stage. Leave start on auto or intent.")
     if start == "intent" and not idea:
         fail("The intent stage needs an idea.")
-    feature = env("SDLC_FEATURE")
     if not feature:
         if not idea:
             fail("Give an idea to start a new feature, or name an existing feature folder.")
@@ -370,7 +388,8 @@ def resolve(args):
                  f"**starts at** {start}")
     # design: this run writes documents and ends by handing the plan to the builder.
     # Otherwise it is the build run: verify, review and open the pull request.
-    set_output(feature=feature, branch=branch, start=start, design=str(start != "build").lower(),
+    set_output(feature=feature, branch=branch, start=start, base=env("BASE_REF"),
+               design=str(start != "build").lower(),
                **{s: str(runs[s]).lower() for s in STAGES})
 
 
@@ -595,7 +614,9 @@ def handoff(feature, branch, tag, sha, phases, builder):
     if builder == "claude":
         lines += [f"**Hand it to Claude Code.** In a Claude Code session on `{env('GITHUB_REPOSITORY')}`, say:", "",
                   f"> Use the sdlc-build skill to build feature `{feature}`: each phase on `phase/{feature}/<n>` "
-                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", ""]
+                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", "",
+                  "Claude Code hands back by pushing the tag "
+                  f"`sdlc/{feature}/run-build` (it can push but can't start workflow runs).", ""]
     else:
         lines += ["**Build it yourself**, one phase at a time:", "", "```bash",
                   f"git fetch origin && git switch {branch}",
@@ -606,8 +627,8 @@ def handoff(feature, branch, tag, sha, phases, builder):
                   f"Or push each phase to `phase/{feature}/<n>` and open a pull request into `{branch}`, "
                   "where the phase check runs on it.", ""]
     lines += [f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
-              f"`{feature}` (start `auto` or `build`). That run verifies the build, has Ollama review it, "
-              "and opens the pull request."]
+              f"`{feature}` (start `auto` or `build`), or push the tag `sdlc/{feature}/run-build`. That run "
+              "verifies the build, has Ollama review it, and opens the pull request."]
     return "\n".join(lines)
 
 

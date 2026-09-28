@@ -14,6 +14,11 @@ name: SDLC Pipeline (reusable)
 # ✋ jobs wait on the review environment when it has required reviewers (public
 # repositories, or paid plans). Without them the run carries on by itself.
 #
+# A builder that can push but can't start workflow runs (Claude Code's GitHub
+# access) asks for one with a tag: sdlc/<feature>/run-build hands a built feature
+# back, sdlc/<feature>/run-plan or run-spec redoes the design from that stage.
+# The caller triggers on `push: tags: ["sdlc/*/run-*"]`.
+#
 # Called from a repository's own workflow; ly2xxx/interview-playground has one:
 #   jobs:
 #     sdlc:
@@ -67,6 +72,10 @@ on:
       features-dir:
         type: string
         default: sdlc/features
+      base:
+        description: The branch features start from and go into. Empty = the repository's default branch.
+        type: string
+        default: ""
     secrets:
       OLLAMA_API_KEY:
         required: false
@@ -86,6 +95,7 @@ jobs:
     outputs:
       feature: ${{ steps.r.outputs.feature }}
       branch: ${{ steps.r.outputs.branch }}
+      base: ${{ steps.r.outputs.base }}
       design: ${{ steps.r.outputs.design }}
       intent: ${{ steps.r.outputs.intent }}
       spec: ${{ steps.r.outputs.spec }}
@@ -101,6 +111,8 @@ jobs:
           idea: ${{ inputs.idea }}
           feature: ${{ inputs.feature }}
           start: ${{ inputs.start }}
+          request: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          base: ${{ inputs.base || github.event.repository.default_branch }}
           features-dir: ${{ inputs.features-dir }}
 
   # ------------------------------------------------------------------ design run: Ollama
@@ -123,6 +135,7 @@ jobs:
           idea: ${{ inputs.idea }}
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
+          base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
@@ -153,6 +166,7 @@ jobs:
           stage: spec
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
+          base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
@@ -183,6 +197,7 @@ jobs:
           stage: plan
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
+          base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           test-command: ${{ inputs.test-command }}
@@ -240,7 +255,7 @@ jobs:
           command: verify
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
-          base: ${{ github.ref_name }}
+          base: ${{ needs.resolve.outputs.base }}
           test-command: ${{ inputs.test-command }}
           report: ${{ runner.temp }}/verify-report.md
       - if: always()
@@ -270,7 +285,7 @@ jobs:
           command: review
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
-          base: ${{ github.ref_name }}
+          base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
@@ -310,7 +325,7 @@ jobs:
           command: pr
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
-          base: ${{ github.ref_name }}
+          base: ${{ needs.resolve.outputs.base }}
           report: ${{ runner.temp }}/verify-report.md
           review: ${{ runner.temp }}/ollama-review.md
           github-token: ${{ secrets.SDLC_PR_TOKEN || github.token }}

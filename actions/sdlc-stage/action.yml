@@ -27,6 +27,10 @@ inputs:
     description: One line. Drafts intent.md for a new feature, or revises the named feature's intent.
     required: false
     default: ""
+  request:
+    description: For resolve - a pushed tag sdlc/<feature>/run-spec, run-plan or run-build, used when idea and feature are empty.
+    required: false
+    default: ""
   feature:
     description: Folder under features-dir.
     required: false
@@ -44,7 +48,7 @@ inputs:
     required: false
     default: auto
   base:
-    description: For verify, review and pr - the branch the feature (or phase) goes into.
+    description: The branch the feature (or, for verify with a phase, the phase) goes into. New feature branches start from it.
     required: false
     default: ""
   features-dir:
@@ -92,6 +96,9 @@ outputs:
   feature:
     description: resolve - the feature folder.
     value: ${{ steps.run.outputs.feature }}
+  base:
+    description: resolve - the branch the feature goes into, as given.
+    value: ${{ steps.run.outputs.base }}
   branch:
     description: resolve - the feature branch.
     value: ${{ steps.run.outputs.branch }}
@@ -131,6 +138,7 @@ runs:
         STAGE: ${{ inputs.stage }}
         SDLC_IDEA: ${{ inputs.idea }}
         SDLC_FEATURE: ${{ inputs.feature }}
+        SDLC_REQUEST: ${{ inputs.request }}
         SDLC_START: ${{ inputs.start }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}
