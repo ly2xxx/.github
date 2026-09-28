@@ -10,7 +10,9 @@ Two or three sentences: what changes and for whom.
 ## Behaviour
 Numbered acceptance criteria. Each one is a single observable, testable
 statement ("Given ..., when ..., then ..."). Cover the edge cases the intent
-implies (empty input, missing data), and nothing it does not ask for.
+implies (empty input, missing data), and nothing it does not ask for. The plan
+turns every criterion into an automated test that runs without network access,
+secrets or manual steps, so write each one so that such a test can prove it.
 
 ## Interfaces
 The exact names, parameters and return types to add or change, in the style of

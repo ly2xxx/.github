@@ -65,9 +65,20 @@ Rules:
 - The Verify block holds commands that run from the repository root on a fresh
   checkout with the project installed, exit non-zero on failure, and need no
   network, secrets or running services unless the phase starts them itself.
-  Prefer `uv run pytest tests/test_new.py -v`. Never run the whole suite from
+  Run tests the way "How verification runs" below says when it is given, for
+  example `uv run pytest tests/test_new.py -v`. Never run the whole suite from
   inside a test. The builder executes changes via file edits and runs only the
   prescribed Verify command.
+- Tests are required. Every phase adds or extends automated tests (pytest,
+  unless the repository already uses something else) that prove its Definition
+  of done, lists them in its targets, and runs them in its Verify block. The
+  whole suite also runs at verification and fails if it collects no tests, so a
+  plan without tests can't pass. Prefer in-process tests (for example a test
+  client) to starting servers; when a phase must start a process, stop it in
+  the same command or fixture.
+- Dependencies a phase needs go in the repository's dependency file
+  (`pyproject.toml` if it has one, otherwise `requirements.txt`), and that file
+  is one of the phase's targets.
 - Order the phases so each one leaves the repository working and its tests
   passing.
 - Answer with the Markdown document only, with no preamble.

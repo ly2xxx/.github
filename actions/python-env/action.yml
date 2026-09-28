@@ -1,0 +1,48 @@
+name: Python project environment
+description: Create .venv with uv, install the project (pyproject.toml, requirements.txt or a custom command) plus pytest, and put .venv on PATH for the steps after it.
+author: ly2xxx
+
+# The SDLC verify and phase-check jobs run a plan's Verify commands, which call
+# `python`, `pytest` or `uv run ...`. With .venv on PATH all three resolve to the
+# project's environment, whether the repository uses pyproject.toml or only a
+# requirements.txt.
+
+inputs:
+  python-version:
+    description: Python version for the virtualenv.
+    required: false
+    default: "3.12"
+  install-command:
+    description: Replaces the default install (pyproject.toml, else requirements.txt). Runs with .venv active.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+
+    - name: Install the project
+      shell: bash
+      env:
+        PY: ${{ inputs.python-version }}
+        INSTALL: ${{ inputs.install-command }}
+      run: |
+        set -euo pipefail
+        uv venv --python "$PY" .venv
+        export VIRTUAL_ENV="$PWD/.venv" PATH="$PWD/.venv/bin:$PATH"
+        if [ -n "$INSTALL" ]; then
+          bash -euo pipefail -c "$INSTALL"
+        elif [ -f pyproject.toml ]; then
+          uv pip install -e .
+        elif [ -f requirements.txt ]; then
+          uv pip install -r requirements.txt
+        else
+          echo "No pyproject.toml or requirements.txt yet: installing pytest only."
+        fi
+        if [ -z "$INSTALL" ] && [ -f requirements-dev.txt ]; then
+          uv pip install -r requirements-dev.txt
+        fi
+        uv pip install pytest
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"

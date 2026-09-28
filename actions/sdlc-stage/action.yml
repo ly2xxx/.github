@@ -1,19 +1,23 @@
 name: SDLC Stage
-description: One step of the idea -> intent -> spec -> plan pipeline on Ollama Cloud, or the checks and pull request after a person builds the plan.
+description: One step of the SDLC pipeline - Ollama Cloud writes intent, spec and plan, a builder (Claude Code or a person) builds it, then checks, an Ollama review and the pull request.
 author: ly2xxx
 
 # Commands (see sdlc_stage.py):
 #   resolve  pick the feature folder, its feature/<name> branch and the first stage
 #   stage    write intent.md, spec.md or plan.md and push it to the feature branch
-#   verify   check the built branch against plan.md's phases (scope, frozen files,
-#            each phase's Verify commands, the whole test suite)
+#   freeze   tag the approved documents as sdlc/<feature>/approved and hand the
+#            plan to the builder (step 4)
+#   verify   check the built branch against the approved plan's phases (scope,
+#            frozen files, unchanged documents, each phase's Verify commands, the
+#            whole test suite); with a phase and a base, one phase branch
+#   review   Ollama reviews the diff against the approved spec (advisory)
 #   pr       open or update the pull request, as a draft if verification failed
-# The workflow pauses for a person between stages with a GitHub environment that
-# has required reviewers; the action itself never waits.
+# The workflow can pause for a person between stages with a GitHub environment
+# that has required reviewers; the action itself never waits.
 
 inputs:
   command:
-    description: resolve, stage, verify or pr.
+    description: resolve, stage, freeze, verify, review or pr.
     required: true
   stage:
     description: For command stage - intent, spec or plan.
@@ -27,12 +31,20 @@ inputs:
     description: Folder under features-dir.
     required: false
     default: ""
+  phase:
+    description: For verify - check only this phase (with base, the phase branch's changes).
+    required: false
+    default: ""
+  builder:
+    description: For freeze - who builds the plan, claude or human. Only changes the hand-off instructions.
+    required: false
+    default: claude
   start:
     description: For resolve - auto, intent, spec, plan or build.
     required: false
     default: auto
   base:
-    description: For verify and pr - the branch the feature goes into.
+    description: For verify, review and pr - the branch the feature (or phase) goes into.
     required: false
     default: ""
   features-dir:
@@ -40,11 +52,11 @@ inputs:
     required: false
     default: sdlc/features
   model:
-    description: Ollama Cloud model for intent, spec and plan.
+    description: Ollama Cloud model for intent, spec, plan and review.
     required: false
     default: deepseek-v4-flash:cloud
   ollama-api-key:
-    description: Ollama Cloud API key (command stage).
+    description: Ollama Cloud API key (commands stage and review).
     required: false
     default: ""
   think:
@@ -60,11 +72,15 @@ inputs:
     required: false
     default: "60000"
   test-command:
-    description: For verify - the whole test suite.
+    description: For verify - the whole test suite. The plan stage is also told it, when given.
     required: false
     default: ""
   report:
-    description: For verify and pr - path of the verification report.
+    description: For verify, review and pr - path of the verification report (for review, of the review).
+    required: false
+    default: ""
+  review:
+    description: For pr - path of the Ollama review to add to the pull request.
     required: false
     default: ""
   github-token:
@@ -94,6 +110,12 @@ outputs:
   passed:
     description: verify - true when every check passed.
     value: ${{ steps.run.outputs.passed }}
+  tag:
+    description: freeze - the tag on the approved documents.
+    value: ${{ steps.run.outputs.tag }}
+  design:
+    description: resolve - true when this run writes documents, false when it verifies a build.
+    value: ${{ steps.run.outputs.design }}
   pr:
     description: pr - URL of the pull request.
     value: ${{ steps.run.outputs.pr }}
@@ -110,6 +132,8 @@ runs:
         SDLC_IDEA: ${{ inputs.idea }}
         SDLC_FEATURE: ${{ inputs.feature }}
         SDLC_START: ${{ inputs.start }}
+        SDLC_PHASE: ${{ inputs.phase }}
+        SDLC_BUILDER: ${{ inputs.builder }}
         BASE_REF: ${{ inputs.base }}
         FEATURES_DIR: ${{ inputs.features-dir }}
         OLLAMA_MODEL: ${{ inputs.model }}
@@ -119,9 +143,11 @@ runs:
         MAX_CONTEXT_CHARS: ${{ inputs.max-context-chars }}
         TEST_COMMAND: ${{ inputs.test-command }}
         REPORT: ${{ inputs.report }}
+        REVIEW: ${{ inputs.review }}
         GH_TOKEN: ${{ inputs.github-token }}
         ACTOR: ${{ github.actor }}
         PYTHONUNBUFFERED: "1"
+        GIT_TERMINAL_PROMPT: "0"
       run: |
         script="$GITHUB_ACTION_PATH/sdlc_stage.py"
         case "$COMMAND" in
@@ -129,7 +155,11 @@ runs:
           stage)
             if [ -z "$OLLAMA_API_KEY" ]; then echo "::error::The stage command needs ollama-api-key."; exit 1; fi
             python3 "$script" stage "$STAGE" ;;
-          verify) python3 "$script" verify ${REPORT:+--report "$REPORT"} ;;
-          pr) python3 "$script" pr ${REPORT:+--report "$REPORT"} ;;
-          *) echo "::error::command must be resolve, stage, verify or pr"; exit 1 ;;
+          freeze) python3 "$script" freeze ;;
+          verify) python3 "$script" verify ${SDLC_PHASE:+--phase "$SDLC_PHASE"} ${REPORT:+--report "$REPORT"} ;;
+          review)
+            if [ -z "$OLLAMA_API_KEY" ]; then echo "::error::The review command needs ollama-api-key."; exit 1; fi
+            python3 "$script" review ${REPORT:+--report "$REPORT"} ;;
+          pr) python3 "$script" pr ${REPORT:+--report "$REPORT"} ${REVIEW:+--review "$REVIEW"} ;;
+          *) echo "::error::command must be resolve, stage, freeze, verify, review or pr"; exit 1 ;;
         esac

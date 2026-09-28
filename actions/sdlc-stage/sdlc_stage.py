@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""The design half of an AI-native SDLC as one GitHub Actions run, plus the
-checks for the human-built half.
+"""An AI-native SDLC in GitHub Actions: Ollama Cloud writes the design, a
+builder (Claude Code or a person) writes the code, and deterministic checks
+decide whether it is done.
 
     sdlc_stage.py resolve        pick the feature folder, its branch and the first stage
     sdlc_stage.py stage NAME     write intent.md, spec.md or plan.md with Ollama Cloud
                                  and push it to the feature branch
-    sdlc_stage.py verify         check the built branch against plan.md's phases
+    sdlc_stage.py freeze         tag the approved documents and hand the plan to the builder
+    sdlc_stage.py verify         check the built branch against the approved plan's phases
+    sdlc_stage.py review         Ollama reviews the build against the spec (advisory)
     sdlc_stage.py pr             open the pull request for the feature branch
 
-Between stages the workflow waits on a GitHub environment with required
-reviewers: a person reads the artifact on the feature branch, edits it there
-if it needs changing, and approves. People build the code phase by phase from
-plan.md (with Claude Code or by hand); `verify` then checks the branch before
-the pull request is opened. It runs locally too:
+Between stages the workflow can wait on a GitHub environment with required
+reviewers: a person reads the document on the feature branch, edits it there
+if it needs changing, and approves. `freeze` then tags the approved documents
+as sdlc/<feature>/approved, and `verify` fails if the builder changes them, so
+the builder can't rewrite the plan it is checked against. `verify` runs locally
+too, from a copy of this file:
 
-    python .github/actions/sdlc-stage/sdlc_stage.py verify --feature 002-x --phase 1
+    curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py
+    python /tmp/sdlc_stage.py verify --feature 002-x --phase 1 --test-command "python -m pytest -q"
 
 Standard library only, so a runner needs nothing but python3, git and gh.
 """
@@ -278,6 +283,41 @@ def use_feature_branch(branch):
         git("checkout", "-q", "-B", branch)
 
 
+def approved_tag(feature):
+    return f"sdlc/{feature}/approved"
+
+
+def blob(ref, path):
+    """The file at `ref` as bytes, or None if it isn't there."""
+    r = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def approved_ref(feature):
+    """The tag `freeze` put on the approved documents, or "" if there is none."""
+    tag = approved_tag(feature)
+    git("fetch", "-q", "--no-tags", "origin", f"+refs/tags/{tag}:refs/tags/{tag}", check=False)
+    return tag if git("rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}", check=False) else ""
+
+
+def approved_text(ref, path):
+    """A document as approved, or as it is on the branch when nothing was approved."""
+    if ref:
+        data = blob(ref, path.as_posix())
+        return data.decode("utf-8") if data is not None else ""
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def contract_changes(ref, folder):
+    """The approved documents that now differ from the working tree."""
+    changed = []
+    for name in STAGES:
+        path = folder / f"{name}.md"
+        if blob(ref, path.as_posix()) != (path.read_bytes() if path.exists() else None):
+            changed.append(str(path))
+    return changed
+
+
 def new_feature_name(features_dir, idea):
     """NNN-slug-of-the-idea, numbered after the highest feature on the base or on
     any feature/ branch, so two ideas in flight don't share a number."""
@@ -328,7 +368,10 @@ def resolve(args):
     print(f"Feature {feature} on {branch}, starting at {start}.")
     step_summary(f"**Feature** `{feature}` · **branch** [`{branch}`]({repo_url('tree', branch)}) · "
                  f"**starts at** {start}")
-    set_output(feature=feature, branch=branch, start=start, **{s: str(runs[s]).lower() for s in STAGES})
+    # design: this run writes documents and ends by handing the plan to the builder.
+    # Otherwise it is the build run: verify, review and open the pull request.
+    set_output(feature=feature, branch=branch, start=start, design=str(start != "build").lower(),
+               **{s: str(runs[s]).lower() for s in STAGES})
 
 
 # ---------------------------------------------------------------- stage
@@ -353,6 +396,11 @@ def prompt_parts(stage, folder, files, budget, idea):
             parts.append(f"## {name}.md\n" + (folder / f"{name}.md").read_text(encoding="utf-8"))
             sources.append(f"{name}.md")
     named = mentioned_files("\n".join(parts[1:]), files)
+    if stage == "plan" and env("TEST_COMMAND"):
+        parts.append("## How verification runs\nThe verify job installs the project into a virtualenv that is on "
+                     "PATH (from pyproject.toml if there is one, otherwise requirements.txt, plus pytest). It "
+                     "runs each phase's Verify block from the repository root, then the whole suite with "
+                     f"`{env('TEST_COMMAND')}`, which fails if it collects no tests.")
     parts.append("## Repository files\n" + repo_tree(files))
     if Path("README.md").exists():
         parts.append("## README.md (start)\n" + Path("README.md").read_text(encoding="utf-8")[:4000])
@@ -407,7 +455,8 @@ def stage(args):
     summary = [f"## {name}.md is ready for review", "",
                f"[View]({view}) · [Edit on the branch]({edit}) · model `{model}`", "",
                "Read it, edit it on the branch if it needs changing, then approve the next "
-               "**Review** job (Review deployments). Rejecting stops the run.", ""]
+               "**Review** job (Review deployments). Rejecting stops the run. Where the review "
+               "environment has no required reviewers, the run carries on by itself.", ""]
     if problems:
         summary += ["> [!WARNING]", "> The plan still has problems. Fix them on the branch before approving:"]
         summary += [f"> - {p}" for p in problems] + [""]
@@ -441,15 +490,25 @@ def verify(args):
     feature = args.feature or env("SDLC_FEATURE") or fail("Name the feature (--feature).")
     folder = Path(features_dir, feature)
     plan_path = folder / "plan.md"
-    if not plan_path.exists():
-        fail(f"{plan_path} doesn't exist")
-    phases = parse_phases(plan_path.read_text(encoding="utf-8"))
-    if args.phase:
-        phases = [p for p in phases if p["id"] == args.phase] or fail(f"plan.md has no phase {args.phase}")
+    # The plan the builder is checked against is the approved one, not whatever
+    # plan.md says on the branch the builder pushes to.
+    tag = approved_ref(feature)
+    plan = approved_text(tag, plan_path)
+    if not plan:
+        fail(f"{plan_path} doesn't exist" + (f" at {tag}" if tag else ""))
+    phases = parse_phases(plan)
+    ids = [p["id"] for p in phases]
+    if args.phase and args.phase not in ids:
+        fail(f"plan.md has no phase {args.phase}")
+    # A phase is scoped to its own targets and frozen files and re-runs the Verify
+    # blocks of every phase up to it; the whole feature uses every phase.
+    upto = phases[: ids.index(args.phase) + 1] if args.phase else phases
+    scoped = upto[-1:] if args.phase else phases
     base = args.base or env("BASE_REF")
-    # One phase is checked against uncommitted work, like phase_check.py; the
-    # whole feature against everything the branch changed since the base.
-    if args.phase:
+    # One phase is checked against uncommitted work, like phase_check.py, or with a
+    # base against what its phase branch changed; the whole feature against
+    # everything the branch changed since the base.
+    if args.phase and not base:
         changed, against = changed_since(None, True), "uncommitted changes"
     else:
         if not base:
@@ -458,32 +517,41 @@ def verify(args):
         ref = f"origin/{base}" if git("rev-parse", "--verify", "-q", f"origin/{base}", check=False) else base
         changed, against = changed_since(ref, False), f"changes since `{base}`"
     changed = [p for p in changed if not p.startswith(str(folder) + "/")]
-    targets = [t for p in phases for t in p["targets"]]
+    targets = [t for p in scoped for t in p["targets"]]
     if args.phase:
-        frozen = [f for p in phases for f in p["frozen"]]
+        frozen = [f for p in scoped for f in p["frozen"]]
     else:
         # In whole-feature verification, files targeted by any phase are intentional changes.
         # Only files outside all phase targets can be considered frozen violations.
         frozen = [f for p in phases for f in p["frozen"] if not matches_any(f, targets)]
     frozen_hit = [p for p in changed if matches_any(p, frozen) and not matches_any(p, targets)]
     outside = [p for p in changed if not matches_any(p, targets) and p not in frozen_hit]
+    tampered = contract_changes(tag, folder) if tag else []
 
     rows, ok = [], True
     report = [f"# Verification: {feature}" + (f", phase {args.phase}" if args.phase else ""), ""]
     if not changed:
         report.append(f"> [!WARNING]\n> No code changed ({against}). Nothing has been built yet.\n")
         ok = False
+    if not tag:
+        contract = f"no `{approved_tag(feature)}` tag, so plan.md was read from the branch unchecked."
+    elif not tampered:
+        contract = f"intent.md, spec.md and plan.md match `{tag}`."
+    else:
+        contract = ("**changed after approval:** " + ", ".join(f"`{p}`" for p in tampered)
+                    + ". Run the design stages again instead of editing them.")
     report += [f"**Scope** ({against}): {len(changed)} file(s) changed. "
                + ("All inside the plan's targets." if not outside else f"**{len(outside)} outside the plan:** "
                   + ", ".join(f"`{p}`" for p in outside)),
                f"**Frozen files:** " + ("none touched." if not frozen_hit else "**modified:** "
-                                         + ", ".join(f"`{p}`" for p in frozen_hit)), ""]
-    ok = ok and not outside and not frozen_hit
+                                         + ", ".join(f"`{p}`" for p in frozen_hit)),
+               f"**Contract:** {contract}", ""]
+    ok = ok and not outside and not frozen_hit and not tampered
     test_command = args.test_command or env("TEST_COMMAND")
     if test_command:
         code, out = run_check(test_command)
         rows.append(("Whole test suite", test_command, code, out))
-    for p in phases:
+    for p in upto:
         if p["verify"]:
             code, out = run_check(p["verify"])
             rows.append((f"Phase {p['id']}: {p['title'].split(':', 1)[-1].strip()}", p["verify"], code, out))
@@ -507,6 +575,106 @@ def verify(args):
     sys.exit(0 if ok else 1)
 
 
+# ---------------------------------------------------------------- freeze
+
+LOCAL_CHECK = "https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py"
+
+
+def handoff(feature, branch, tag, sha, phases, builder):
+    """The step summary that pauses the pipeline for the builder."""
+    test_command = env("TEST_COMMAND", "python -m pytest -q")
+    who = "Claude Code" if builder == "claude" else "a person"
+    lines = [f"## ⏸ Step 4: waiting for the build (builder: {who})", "",
+             f"The design is frozen: `{tag}` marks intent.md, spec.md and plan.md at `{sha}` on "
+             f"[`{branch}`]({repo_url('tree', branch)}). Verification fails if any of them change, so the "
+             "builder builds the plan but can't rewrite it. Changing it means running the design stages again.", "",
+             "**Phases to build:**"]
+    lines += [f"{i}. **Phase {p['id']}**: {p['title'].split(':', 1)[-1].strip()} "
+              f"({', '.join(f'`{t}`' for t in p['targets'])})" for i, p in enumerate(phases, 1)]
+    lines.append("")
+    if builder == "claude":
+        lines += [f"**Hand it to Claude Code.** In a Claude Code session on `{env('GITHUB_REPOSITORY')}`, say:", "",
+                  f"> Use the sdlc-build skill to build feature `{feature}`: each phase on `phase/{feature}/<n>` "
+                  f"with a pull request into `{branch}`, then hand back to the SDLC Pipeline.", ""]
+    else:
+        lines += ["**Build it yourself**, one phase at a time:", "", "```bash",
+                  f"git fetch origin && git switch {branch}",
+                  f"curl -sSfLo /tmp/sdlc_stage.py {LOCAL_CHECK}",
+                  "# build phase <n>: change only its targets, then check it",
+                  f'python /tmp/sdlc_stage.py verify --feature {feature} --phase <n> --test-command "{test_command}"',
+                  f'git add -A && git commit -m "sdlc({feature}): phase <n>" && git push', "```", "",
+                  f"Or push each phase to `phase/{feature}/<n>` and open a pull request into `{branch}`, "
+                  "where the phase check runs on it.", ""]
+    lines += [f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
+              f"`{feature}` (start `auto` or `build`). That run verifies the build, has Ollama review it, "
+              "and opens the pull request."]
+    return "\n".join(lines)
+
+
+def freeze(args):
+    features_dir = env("FEATURES_DIR", "sdlc/features").strip("/")
+    feature = env("SDLC_FEATURE") or fail("SDLC_FEATURE is not set")
+    builder = env("SDLC_BUILDER", "claude").lower()
+    if builder not in ("claude", "human"):
+        fail(f"builder must be claude or human, not {builder}")
+    branch = branch_for(feature)
+    use_feature_branch(branch)
+    folder = Path(features_dir, feature)
+    missing = [f"{s}.md" for s in STAGES if not (folder / f"{s}.md").exists()]
+    if missing:
+        fail(f"{folder} has no {', '.join(missing)}, so there is nothing to build yet.")
+    plan = (folder / "plan.md").read_text(encoding="utf-8")
+    problems = plan_problems(plan, (folder / "intent.md").read_text(encoding="utf-8"))
+    if problems:
+        step_summary("## plan.md can't be built yet\n\n" + "\n".join(f"- {p}" for p in problems))
+        fail("plan.md can't be built yet: " + " ".join(problems)
+             + " Fix it on the branch and re-run this job, or run the plan stage again.")
+    tag, sha = approved_tag(feature), git("rev-parse", "--short", "HEAD")
+    git("config", "user.name", "github-actions[bot]")
+    git("config", "user.email", "41898283+github-actions[bot]@users.noreply.github.com")
+    git("tag", "-f", "-a", tag, "-m", f"Approved intent, spec and plan for {feature}\n\nBuilder: {builder}")
+    git("push", "-f", "-q", "origin", f"refs/tags/{tag}")
+    print(f"Tagged {tag} at {sha}. Waiting for {builder} to build {branch}.")
+    step_summary(handoff(feature, branch, tag, sha, parse_phases(plan), builder))
+    set_output(tag=tag, sha=sha)
+
+
+# ---------------------------------------------------------------- review
+
+def review(args):
+    """Ollama reads the approved spec and plan and the whole diff, and says
+    whether the build does what the spec asks. Advisory: the checks decide."""
+    features_dir = env("FEATURES_DIR", "sdlc/features").strip("/")
+    feature = env("SDLC_FEATURE") or fail("SDLC_FEATURE is not set")
+    base = env("BASE_REF") or fail("BASE_REF is not set")
+    folder = Path(features_dir, feature)
+    tag = approved_ref(feature)
+    git("fetch", "-q", "origin", base, check=False)
+    ref = f"origin/{base}" if git("rev-parse", "--verify", "-q", f"origin/{base}", check=False) else base
+    skip = [f":(exclude){(folder / f'{s}.md').as_posix()}" for s in STAGES]
+    stat = git("diff", "--stat", f"{ref}...HEAD", "--", ".", *skip)
+    diff = git("diff", "--no-color", f"{ref}...HEAD", "--", ".", *skip)
+    if not diff:
+        fail(f"Nothing changed since {base}, so there is nothing to review.")
+    budget = int(env("MAX_CONTEXT_CHARS", "60000"))
+    note = ""
+    if len(diff) > budget:
+        diff, note = diff[:budget], f"\n\n(The diff is truncated at {budget} characters.)"
+    parts = [(ACTION_DIR / "prompts" / "review.md").read_text(encoding="utf-8")]
+    parts += [f"## {s}.md (approved)\n" + approved_text(tag, folder / f"{s}.md") for s in STAGES]
+    parts += [f"## Diffstat\n```\n{stat}\n```", f"## Diff\n```diff\n{diff}\n```{note}"]
+    model = env("OLLAMA_MODEL", "deepseek-v4-flash:cloud")
+    print(f"Reviewing {feature} with {model}", flush=True)
+    text = unfence(chat(model, "\n\n".join(parts)))
+    out = "\n".join([f"<!-- sdlc stage=review model={model} -->", "## Ollama review (advisory)", "",
+                     f"`{model}` compared the diff with the approved spec and plan. Its review informs the "
+                     "merge but doesn't gate it; the verification above does.", "", text, ""])
+    if args.report:
+        Path(args.report).write_text(out, encoding="utf-8")
+    step_summary(out)
+    set_output(path=args.report or "")
+
+
 # ---------------------------------------------------------------- pr
 
 def pr(args):
@@ -519,12 +687,18 @@ def pr(args):
     intent = (folder / "intent.md").read_text(encoding="utf-8")
     title_m = re.search(r"^# Intent:\s*(.+)$", intent, flags=re.MULTILINE)
     title = f"{feature}: {title_m.group(1).strip() if title_m else 'feature'}"
-    phases = parse_phases((folder / "plan.md").read_text(encoding="utf-8"))
+    tag = approved_ref(feature)
+    phases = parse_phases(approved_text(tag, folder / "plan.md"))
     report_path = Path(args.report) if args.report else None
     report = report_path.read_text(encoding="utf-8") if report_path and report_path.exists() else \
         "_The verification report is missing._"
-    links = " · ".join(f"[{n}.md]({repo_url('blob', branch, str(folder / (n + '.md')))})" for n in STAGES)
-    body = [f"Built from {links}, each approved in the SDLC Pipeline run.", "",
+    review_path = Path(args.review) if args.review else None
+    review_text = review_path.read_text(encoding="utf-8") if review_path and review_path.exists() else \
+        ("_The Ollama review didn't run._" if args.review else "")
+    docs = [n + ".md" for n in STAGES] + (["build-log.md"] if (folder / "build-log.md").exists() else [])
+    links = " · ".join(f"[{d}]({repo_url('blob', branch, str(folder / d))})" for d in docs)
+    frozen = f", frozen at [`{tag}`]({repo_url('tree', tag)})" if tag else ""
+    body = [f"Built from {links}{frozen}, each approved in the SDLC Pipeline run.", "",
             ("Verification **passed**. Review the code, then merge." if passed else
              "Verification **failed**, so this is a draft. Push fixes to "
              f"`{branch}` and re-run the failed jobs."), "", "## Phases"]
@@ -532,6 +706,8 @@ def pr(args):
         body.append(f"- [{'x' if passed else ' '}] **Phase {p['id']}**: {p['title'].split(':', 1)[-1].strip()}")
         body += [f"  - {d}" for d in p["dod"]]
     body += ["", report]
+    if review_text:
+        body += ["", review_text]
     body_text = "\n".join(body)[:60000]
     existing = sh("gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq", ".[0].url")
     if existing:
@@ -541,7 +717,13 @@ def pr(args):
         url = existing
     else:
         cmd = ["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body_text]
-        url = sh(*cmd, *([] if passed else ["--draft"]))
+        r = subprocess.run([*cmd, *([] if passed else ["--draft"])], capture_output=True, text=True)
+        if r.returncode:
+            hint = (" Allow it under Settings → Actions → General → Workflow permissions (\"Allow GitHub Actions "
+                    "to create and approve pull requests\"), or add an SDLC_PR_TOKEN secret."
+                    if "not permitted" in r.stderr else "")
+            fail(f"gh pr create exited {r.returncode}: {r.stderr.strip()[-1000:]}{hint}")
+        url = r.stdout.strip()
     print(f"Pull request: {url}")
     step_summary(f"Pull request: {url}")
     set_output(pr=url)
@@ -553,16 +735,21 @@ def main():
     sub.add_parser("resolve")
     s = sub.add_parser("stage")
     s.add_argument("name", choices=STAGES)
+    sub.add_parser("freeze")
     v = sub.add_parser("verify")
     v.add_argument("--feature")
-    v.add_argument("--phase", help="check one phase against uncommitted changes")
-    v.add_argument("--base", help="branch the feature goes into (whole-feature check)")
+    v.add_argument("--phase", help="check one phase: uncommitted changes, or with --base its phase branch")
+    v.add_argument("--base", help="branch the feature (or, with --phase, the phase) goes into")
     v.add_argument("--test-command")
     v.add_argument("--report", help="also write the report to this file")
+    r = sub.add_parser("review")
+    r.add_argument("--report", help="also write the review to this file")
     p = sub.add_parser("pr")
     p.add_argument("--report")
+    p.add_argument("--review")
     args = ap.parse_args()
-    {"resolve": resolve, "stage": stage, "verify": verify, "pr": pr}[args.cmd](args)
+    {"resolve": resolve, "stage": stage, "freeze": freeze, "verify": verify, "review": review,
+     "pr": pr}[args.cmd](args)
 
 
 if __name__ == "__main__":
