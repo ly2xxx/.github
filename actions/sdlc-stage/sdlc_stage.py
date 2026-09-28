@@ -264,6 +264,25 @@ def plan_problems(plan, intent):
     return problems
 
 
+HAND_BACK = """## Hand back
+When every phase is built and its Verify block passes:
+1. Create `{folder}/build-log.md` with one section per phase, in order. Head each
+   one `## Phase <n>: <title>`, then list the files changed, the Verify command
+   you ran and its result, and any deviation from this plan (or "none").
+2. Commit it and push it to `{branch}`.
+
+The pipeline waits for this file. Once it has a section for every phase, it
+verifies the whole branch and opens the pull request.
+"""
+
+
+def with_hand_back(plan, folder):
+    """Every plan tells its builder, whoever or whatever it is, how to hand back."""
+    if re.search(r"^## Hand back\b", plan, flags=re.MULTILINE):
+        return plan
+    return plan.rstrip() + "\n\n" + HAND_BACK.format(folder=folder.as_posix(), branch=branch_for(folder.name))
+
+
 # ---------------------------------------------------------------- branches
 
 def branch_for(feature):
@@ -454,6 +473,8 @@ def prompt_parts(stage, folder, files, budget, idea):
             parts.append(f"## {name}.md\n" + (folder / f"{name}.md").read_text(encoding="utf-8"))
             sources.append(f"{name}.md")
     named = mentioned_files("\n".join(parts[1:]), files)
+    if stage == "plan":
+        parts.append(f"## Feature\nFolder: `{folder.as_posix()}`. Branch: `{branch_for(folder.name)}`.")
     if stage == "plan" and env("TEST_COMMAND"):
         parts.append("## How verification runs\nThe verify job installs the project into a virtualenv that is on "
                      "PATH (from pyproject.toml if there is one, otherwise requirements.txt, plus pytest). It "
@@ -496,6 +517,7 @@ def stage(args):
                      + "\n\n## Your previous plan\n" + text + "\n\nWrite the whole plan again, fixed.")
             text = unfence(chat(model, "\n\n".join(parts) + retry))
             problems = plan_problems(text, intent)
+        text = with_hand_back(text, folder)
 
     path = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)

@@ -48,6 +48,19 @@ What could break, and which phase's checks would catch it.
 ## Open questions
 Anything unresolved, with the assumption made. Write "None" if there are none.
 
+## Hand back
+How the builder finishes, for a person or any coding agent. Write it exactly as
+below, with the real folder and branch from "Feature" filled in:
+
+When every phase is built and its Verify block passes:
+1. Create `<folder>/build-log.md` with one section per phase, in order. Head each
+   one `## Phase <n>: <title>`, then list the files changed, the Verify command
+   you ran and its result, and any deviation from this plan (or "none").
+2. Commit it and push it to `<branch>`.
+
+The pipeline waits for this file. Once it has a section for every phase, it
+verifies the whole branch and opens the pull request.
+
 Rules:
 - Self-driven automated builds: The plan will be implemented by automated AI
   coding agents (such as Claude Code or Antigravity) that pause for manual user
@@ -81,4 +94,6 @@ Rules:
   is one of the phase's targets.
 - Order the phases so each one leaves the repository working and its tests
   passing.
+- In "Hand back", never start a line with `## Phase`: that heading only appears
+  inside backticks there. No checkboxes in that section either.
 - Answer with the Markdown document only, with no preamble.
