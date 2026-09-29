@@ -82,6 +82,16 @@ Rules:
   example `uv run pytest tests/test_new.py -v`. Never run the whole suite from
   inside a test. The builder executes changes via file edits and runs only the
   prescribed Verify command.
+- Verify blocks run under `bash -e -o pipefail`: first on the builder's
+  uncommitted work, then again on the committed result, in the Phase check on
+  the phase's pull request and in the final verification, which re-runs every
+  phase's block on the finished branch. So a block must still pass after its
+  own phase and every later phase is committed. To compare with a file as it
+  was before the build, read it from the approved tag named in "Feature"
+  (`git show <tag>:<path>`), never from `HEAD`.
+- A line starting with `!` never fails a block under `bash -e`. Check that
+  something is absent with `test ! -e <path>` for a file, or
+  `test -z "$(<command> || true)"` for command output.
 - Tests are required. Every phase adds or extends automated tests (pytest,
   unless the repository already uses something else) that prove its Definition
   of done, lists them in its targets, and runs them in its Verify block. The

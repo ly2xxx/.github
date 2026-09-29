@@ -474,7 +474,9 @@ def prompt_parts(stage, folder, files, budget, idea):
             sources.append(f"{name}.md")
     named = mentioned_files("\n".join(parts[1:]), files)
     if stage == "plan":
-        parts.append(f"## Feature\nFolder: `{folder.as_posix()}`. Branch: `{branch_for(folder.name)}`.")
+        parts.append(f"## Feature\nFolder: `{folder.as_posix()}`. Branch: `{branch_for(folder.name)}`. "
+                     f"Approved tag: `{approved_tag(folder.name)}`, created when this plan is approved; it marks the "
+                     "approved documents and the code before the build.")
     if stage == "plan" and env("TEST_COMMAND"):
         parts.append("## How verification runs\nThe verify job installs the project into a virtualenv that is on "
                      "PATH (from pyproject.toml if there is one, otherwise requirements.txt, plus pytest). It "
