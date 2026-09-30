@@ -1,3 +1,4 @@
+
 # AI-native SDLC pipeline
 
 One GitHub Actions run takes a feature from a one-line idea to a pull request.
@@ -28,7 +29,6 @@ you approve the plan.
    - Click **New environment** and name it `sdlc-review`:
 
      ![Create sdlc-review environment](HITL/sdlc-review.png)
-
    - Under **Deployment protection rules**, check **Required reviewers** and add yourself as a reviewer. Leave **Prevent self-review** unchecked (so you can approve runs triggered by your own actions), then click **Save protection rules**:
 
      ![Configure Required reviewers protection rules](HITL/sdlc-review_hitl.png)
@@ -36,7 +36,6 @@ you approve the plan.
    - **Option A (Workflow permissions):** In **Settings → Actions → General**, under **Workflow permissions**, check **Allow GitHub Actions to create and approve pull requests** and click **Save**:
 
      ![Allow GitHub Actions to create and approve pull requests](SDLC_PR_TOKEN/workflow-permissions.png)
-
    - **Option B (`SDLC_PR_TOKEN` secret):** Create a fine-grained personal access token (under user **Settings → Developer Settings → Personal access tokens → Fine-grained tokens**) with repository permissions for **Pull requests: Read and write** and **Contents: Read-only** (or write), then add it as a repository secret named `SDLC_PR_TOKEN` under **Settings → Secrets and variables → Actions**:
 
      ![Configure SDLC_PR_TOKEN fine-grained personal access token](SDLC_PR_TOKEN/sdlc-pr-token.png)
@@ -77,13 +76,13 @@ you approve the plan.
    If step 4 stopped waiting first, run it again with the feature and start
    `build`.
 
-| Run workflow with | Does |
-| :-- | :-- |
-| idea | a new feature, numbered after the highest existing one |
-| idea + feature | revises that feature's intent, then spec and plan again, and re-freezes |
-| feature | the first missing document, or the build run if all three exist |
-| feature + start | that stage onwards: `spec` or `plan` redoes the design, `build` runs only steps 5-6 |
-| an issue labelled `sdlc` | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
+| Run workflow with         | Does                                                                                                                      |
+| :------------------------ | :------------------------------------------------------------------------------------------------------------------------ |
+| idea                      | a new feature, numbered after the highest existing one                                                                    |
+| idea + feature            | revises that feature's intent, then spec and plan again, and re-freezes                                                   |
+| feature                   | the first missing document, or the build run if all three exist                                                           |
+| feature + start           | that stage onwards:`spec` or `plan` redoes the design, `build` runs only steps 5-6                                  |
+| an issue labelled`sdlc` | the title is the idea;`feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
 
 ## What the checks hold the builder to
 
