@@ -271,6 +271,10 @@ When every phase is built and its Verify block passes:
    you ran and its result, and any deviation from this plan (or "none").
 2. Commit it and push it to `{branch}`.
 
+Commit only this plan's targets and `build-log.md`. Leave every other file alone,
+including other features' documents under `sdlc/features/`, even for formatting;
+verification fails on any file outside the targets.
+
 The pipeline waits for this file. Once it has a section for every phase, it
 verifies the whole branch and opens the pull request.
 """
