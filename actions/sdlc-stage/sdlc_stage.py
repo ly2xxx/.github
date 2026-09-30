@@ -61,7 +61,7 @@ def sh(*cmd, check=True):
 
 
 def git(*args, check=True):
-    return sh("git", *args, check=check)
+    return sh("git", "-c", "core.quotePath=false", *args, check=check)
 
 
 def set_output(**values):
