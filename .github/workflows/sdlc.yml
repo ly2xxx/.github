@@ -3,7 +3,7 @@ name: SDLC Pipeline (reusable)
 # One feature, from a one-line idea to a pull request, in one run and one line:
 #
 #   resolve → 1 · intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋ → 4 · ⏸ hand off and wait
-#           → 5 · verify → 5 · Ollama review → 6 · ✋ open the pull request
+#           → 5 · verify, 5 · security scan → 5 · Ollama review → 6 · ✋ open the pull request
 #
 # Ollama Cloud writes the documents. Step 4 tags them as sdlc/<feature>/approved,
 # writes the hand-off for the builder (Claude Code in real work, a person for
@@ -86,6 +86,14 @@ on:
         description: How long step 4 waits for the build (at most 350). 0 ends the run at the hand-off.
         type: number
         default: 180
+      security-scan:
+        description: Scan for secrets, vulnerable dependencies and misconfigurations the branch adds; the pull request waits for it.
+        type: boolean
+        default: true
+      security-severity:
+        description: Trivy severities that fail the scan, comma-separated.
+        type: string
+        default: HIGH,CRITICAL
     secrets:
       OLLAMA_API_KEY:
         required: false
@@ -293,6 +301,34 @@ jobs:
           path: ${{ runner.temp }}/verify-report.md
           if-no-files-found: ignore
 
+  security:
+    name: "5 · Security scan"
+    needs: [resolve, handoff]
+    # Runs beside verify. Only secrets, vulnerable dependencies and misconfigurations the
+    # branch adds fail it; the base branch's own findings are listed, not blocking.
+    if: ${{ !cancelled() && !failure() && inputs.security-scan && (needs.resolve.outputs.mode == 'build' || needs.handoff.outputs.built == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read        # reads the branch and its history; runs no project code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ly2xxx/.github/actions/security-scan@main
+        with:
+          base: ${{ needs.resolve.outputs.base }}
+          severity: ${{ inputs.security-severity }}
+          report: ${{ runner.temp }}/security-report.md
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: ${{ runner.temp }}/security-report.md
+          if-no-files-found: ignore
+
   review:
     name: "5 · Ollama reviews the build"
     needs: [resolve, verify]
@@ -326,8 +362,9 @@ jobs:
 
   pr:
     name: "6 · ✋ Open the pull request"
-    needs: [resolve, verify, review]
-    if: ${{ !cancelled() && needs.verify.result == 'success' }}
+    needs: [resolve, verify, security, review]
+    # Needs a passed verify and a passed (or switched-off) security scan.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.security.result == 'success' || needs.security.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     permissions:
@@ -346,6 +383,11 @@ jobs:
         with:
           name: ollama-review
           path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v4
+        if: needs.security.result == 'success'
+        with:
+          name: security-report
+          path: ${{ runner.temp }}
       - uses: ly2xxx/.github/actions/sdlc-stage@main
         env:
           VERIFY_PASSED: ${{ needs.verify.result == 'success' }}
@@ -356,4 +398,5 @@ jobs:
           base: ${{ needs.resolve.outputs.base }}
           report: ${{ runner.temp }}/verify-report.md
           review: ${{ runner.temp }}/ollama-review.md
+          security: ${{ needs.security.result == 'success' && format('{0}/security-report.md', runner.temp) || '' }}
           github-token: ${{ secrets.SDLC_PR_TOKEN || github.token }}

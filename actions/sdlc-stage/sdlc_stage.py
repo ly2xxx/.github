@@ -829,6 +829,8 @@ def pr(args):
     review_path = Path(args.review) if args.review else None
     review_text = review_path.read_text(encoding="utf-8") if review_path and review_path.exists() else \
         ("_The Ollama review didn't run._" if args.review else "")
+    security_path = Path(args.security) if args.security else None
+    security_text = security_path.read_text(encoding="utf-8") if security_path and security_path.exists() else ""
     docs = [n + ".md" for n in STAGES] + (["build-log.md"] if (folder / "build-log.md").exists() else [])
     links = " · ".join(f"[{d}]({repo_url('blob', branch, str(folder / d))})" for d in docs)
     frozen = f", frozen at [`{tag}`]({repo_url('tree', tag)})" if tag else ""
@@ -840,6 +842,8 @@ def pr(args):
         body.append(f"- [{'x' if passed else ' '}] **Phase {p['id']}**: {p['title'].split(':', 1)[-1].strip()}")
         body += [f"  - {d}" for d in p["dod"]]
     body += ["", report]
+    if security_text:
+        body += ["", security_text]
     if review_text:
         body += ["", review_text]
     body_text = "\n".join(body)[:60000]
@@ -889,6 +893,7 @@ def main():
     p = sub.add_parser("pr")
     p.add_argument("--report")
     p.add_argument("--review")
+    p.add_argument("--security")
     args = ap.parse_args()
     {"resolve": resolve, "stage": stage, "freeze": freeze, "wait": wait, "verify": verify,
      "review": review, "pr": pr}[args.cmd](args)
