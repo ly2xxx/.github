@@ -8,7 +8,8 @@ is done.
 one run, one line
 resolve → 1 · Ollama writes intent.md ✋ → 2 · spec.md ✋ → 3 · plan.md ✋
         → 4 · ⏸ hand off and wait for the build      the builder (Claude Code, or a person) builds
-        → 5 · verify → 5 · Ollama reviews the build     plan.md phase by phase meanwhile: each phase on
+        → 5 · verify, 5 · security scan                  plan.md phase by phase meanwhile: each phase on
+        → 5 · Ollama reviews the build
         → 6 · ✋ open the pull request                   phase/<feature>/<n> → PR into feature/<feature>
                                                           → Phase check → merge
 ```
@@ -19,6 +20,7 @@ resolve → 1 · Ollama writes intent.md ✋ → 2 · spec.md ✋ → 3 · plan.
 | `.github/workflows/sdlc-phase.yml` | Reusable workflow: checks one phase's pull request into the feature branch. |
 | `actions/sdlc-stage` | Composite action and `sdlc_stage.py` (standard library only): `resolve`, `stage`, `freeze`, `verify`, `review`, `pr`. |
 | `actions/python-env` | Composite action: `.venv` with the project and pytest installed, on PATH. |
+| `actions/security-scan` | Composite action: gitleaks and Trivy, failing only on what the branch adds. See [its README](../security-scan/README.md). |
 
 ## How the run pauses at step 4
 
@@ -58,6 +60,11 @@ that run doesn't need show as skipped, in the same line. With
   `frozen` file, fails the check. `*` doesn't cross `/`; `**` does.
 - **"Tests pass" is an exit code**, from each phase's Verify block and the
   whole suite. A suite that collects no tests fails.
+- **Security is scanned, and only new problems block.** Step 5's security scan
+  fails on secrets in the branch's commits and on HIGH or CRITICAL vulnerable
+  dependencies (with a fix available) or misconfigurations that the base branch
+  doesn't have. The pull request waits for it and carries its report. Callers
+  can switch it off with `security-scan: false`.
 - **Ollama's review is advisory.** It compares the diff with the spec and goes
   into the pull request, and it never blocks one.
 

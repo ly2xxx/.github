@@ -1,0 +1,72 @@
+name: Security scan
+description: Secrets (gitleaks) and vulnerable dependencies and misconfigurations (Trivy) that a branch adds. Findings already on the base branch are reported, not blocking.
+author: ly2xxx
+
+# Both scanners are installed from their GitHub releases at pinned versions and
+# checked against pinned SHA-256 checksums, so a moved tag or a swapped release
+# asset fails the install instead of running. To upgrade, change a version and
+# its checksum together (the release's *_checksums.txt has it).
+
+inputs:
+  base:
+    description: The branch the feature goes into, for example main. Only what the branch adds fails the scan.
+    required: true
+  severity:
+    description: Trivy severities that count, comma-separated.
+    required: false
+    default: HIGH,CRITICAL
+  report:
+    description: Also write the Markdown report to this path.
+    required: false
+    default: ""
+  gitleaks-version:
+    required: false
+    default: 8.30.1
+  gitleaks-sha256:
+    description: SHA-256 of gitleaks_<version>_linux_x64.tar.gz.
+    required: false
+    default: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  trivy-version:
+    required: false
+    default: 0.74.0
+  trivy-sha256:
+    description: SHA-256 of trivy_<version>_Linux-64bit.tar.gz.
+    required: false
+    default: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+
+runs:
+  using: composite
+  steps:
+    - name: Install gitleaks and Trivy (pinned, checksum-verified)
+      shell: bash
+      env:
+        GITLEAKS_VERSION: ${{ inputs.gitleaks-version }}
+        GITLEAKS_SHA256: ${{ inputs.gitleaks-sha256 }}
+        TRIVY_VERSION: ${{ inputs.trivy-version }}
+        TRIVY_SHA256: ${{ inputs.trivy-sha256 }}
+      run: |
+        set -euo pipefail
+        if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
+          echo "::error::The security scan runs on Linux x86_64 runners only."; exit 1
+        fi
+        bin="$RUNNER_TEMP/security-scan-bin"; mkdir -p "$bin"; cd "$RUNNER_TEMP"
+        fetch() {  # url file sha256 binary
+          curl -sSfL --retry 3 -o "$2" "$1"
+          echo "$3  $2" | sha256sum -c --quiet - || { echo "::error::$2 doesn't match its pinned checksum."; exit 1; }
+          tar -xzf "$2" -C "$bin" "$4"
+        }
+        fetch "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+          gitleaks.tar.gz "$GITLEAKS_SHA256" gitleaks
+        fetch "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+          trivy.tar.gz "$TRIVY_SHA256" trivy
+        echo "$bin" >> "$GITHUB_PATH"
+        "$bin/gitleaks" version; "$bin/trivy" --version | head -1
+
+    - name: Scan what this branch adds
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        SEVERITY: ${{ inputs.severity }}
+        REPORT: ${{ inputs.report }}
+        PYTHONUNBUFFERED: "1"
+      run: python3 "$GITHUB_ACTION_PATH/security_scan.py" --base "$BASE" --severity "$SEVERITY" ${REPORT:+--report "$REPORT"}

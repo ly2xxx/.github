@@ -96,6 +96,10 @@ inputs:
     description: For pr - path of the Ollama review to add to the pull request.
     required: false
     default: ""
+  security:
+    description: For pr - path of the security scan report to add to the pull request.
+    required: false
+    default: ""
   github-token:
     description: For pr - token that opens the pull request.
     required: false
@@ -169,6 +173,7 @@ runs:
         TEST_COMMAND: ${{ inputs.test-command }}
         REPORT: ${{ inputs.report }}
         REVIEW: ${{ inputs.review }}
+        SECURITY: ${{ inputs.security }}
         GH_TOKEN: ${{ inputs.github-token }}
         ACTOR: ${{ github.actor }}
         PYTHONUNBUFFERED: "1"
@@ -186,6 +191,6 @@ runs:
           review)
             if [ -z "$OLLAMA_API_KEY" ]; then echo "::error::The review command needs ollama-api-key."; exit 1; fi
             python3 "$script" review ${REPORT:+--report "$REPORT"} ;;
-          pr) python3 "$script" pr ${REPORT:+--report "$REPORT"} ${REVIEW:+--review "$REVIEW"} ;;
+          pr) python3 "$script" pr ${REPORT:+--report "$REPORT"} ${REVIEW:+--review "$REVIEW"} ${SECURITY:+--security "$SECURITY"} ;;
           *) echo "::error::command must be resolve, stage, freeze, wait, verify, review or pr"; exit 1 ;;
         esac

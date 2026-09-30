@@ -14,7 +14,7 @@ Actions → SDLC Pipeline → Run workflow (idea), or an issue labelled "sdlc"  
         the builder: Claude Code (builder=claude) or a person (builder=human)
         for each phase: phase/<feature>/<n> → PR into feature/<feature> → SDLC Phase Check → merge
         when build-log.md logs every phase, the same run carries on:
-  5 · Verify the build → 5 · Ollama reviews the build → 6 · ✋ Open the pull request
+  5 · Verify the build + 5 · Security scan → 5 · Ollama reviews the build → 6 · ✋ Open the pull request
 ```
 
 Everything lands on one branch, `feature/<feature>`, in `sdlc/features/<feature>/`.
@@ -98,6 +98,11 @@ you approve the plan.
   fails.
 - **Coverage.** The plan has a row for every "Done when" item in `intent.md`; one
   it can't deliver is marked `NOT COVERED`, for you to see at the plan review.
+- **Security.** Secrets in the branch's commits, and HIGH or CRITICAL vulnerable
+  dependencies (with a fix available) or misconfigurations that `main` doesn't
+  already have, fail the security scan, and the pull request waits for it.
+  Findings already on `main` are listed, not blocking. Accept one with
+  `.gitleaksignore` or `.trivyignore`; see `actions/security-scan/README.md`.
 - **Ollama's review** of the build is advisory. It goes into the pull request.
 
 ## Guard rails
