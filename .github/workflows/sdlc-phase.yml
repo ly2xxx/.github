@@ -12,7 +12,7 @@ name: SDLC Phase Check (reusable)
 #       branches: ["feature/**"]
 #   jobs:
 #     phase:
-#       uses: ly2xxx/.github/.github/workflows/sdlc-phase.yml@v1
+#       uses: ly2xxx/.github/.github/workflows/sdlc-phase.yml@main
 
 on:
   workflow_call:
@@ -62,11 +62,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ly2xxx/.github/actions/python-env@v1
+      - uses: ly2xxx/.github/actions/python-env@main
         with:
           python-version: ${{ inputs.python-version }}
           install-command: ${{ inputs.install-command }}
-      - uses: ly2xxx/.github/actions/sdlc-stage@v1
+      - uses: ly2xxx/.github/actions/sdlc-stage@main
         with:
           command: verify
           feature: ${{ steps.which.outputs.feature }}

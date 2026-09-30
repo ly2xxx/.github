@@ -19,7 +19,7 @@ as sdlc/<feature>/approved, and `verify` fails if the builder changes them, so
 the builder can't rewrite the plan it is checked against. `verify` runs locally
 too, from a copy of this file:
 
-    curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/v1/actions/sdlc-stage/sdlc_stage.py
+    curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py
     python /tmp/sdlc_stage.py verify --feature 002-x --phase 1 --test-command "python -m pytest -q"
 
 Standard library only, so a runner needs nothing but python3, git and gh.
@@ -659,7 +659,7 @@ def verify(args):
 
 # ---------------------------------------------------------------- freeze
 
-LOCAL_CHECK = "https://raw.githubusercontent.com/ly2xxx/.github/v1/actions/sdlc-stage/sdlc_stage.py"
+LOCAL_CHECK = "https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py"
 
 
 def handoff(feature, branch, tag, sha, phases, builder):

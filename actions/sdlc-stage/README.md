@@ -72,19 +72,9 @@ the builder can open exactly that pull request itself.
 Run one phase's check locally:
 
 ```bash
-curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/v1/actions/sdlc-stage/sdlc_stage.py
+curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py
 python /tmp/sdlc_stage.py verify --feature <feature> --phase <n> --test-command "python -m pytest -q"
 ```
 
-## Versions
-
-Callers pin a major version, `uses: ly2xxx/.github/.github/workflows/sdlc.yml@v1`,
-and the reusable workflows call these actions at the same `@v1`. A caller runs
-the `v1` tag, whatever `main` holds, and so does a paused run when its later jobs
-start.
-
-- **A compatible fix or feature:** merge it to `main`, then move the tag:
-  `git tag -f v1 && git push -f origin v1`.
-- **A breaking change** (a removed or renamed input, a different contract): change
-  the `@v1` references in `.github/workflows/` and the `v1` in `LOCAL_CHECK` to
-  `v2`, tag `v2`, and move the callers over one by one.
+Everything here tracks `@main`. A paused run picks up whatever `main` holds when
+its later jobs start, so tag a release and pin callers to it if that matters.
