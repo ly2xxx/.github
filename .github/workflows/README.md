@@ -1,11 +1,11 @@
-
 # AI-native SDLC pipeline
 
 One GitHub Actions run takes a feature from a one-line idea to a pull request.
 Ollama Cloud writes the design, a builder writes the code, and deterministic
-checks decide whether it is done. The pipeline is the shared one in
-[`ly2xxx/.github`](https://github.com/ly2xxx/.github/tree/main/actions/sdlc-stage);
-this repository only calls it (`.github/workflows/sdlc.yml` and `sdlc-phase.yml`).
+checks decide whether it is done. `sdlc.yml` and `sdlc-phase.yml` here are
+reusable workflows: a repository calls them from its own two workflow files
+(see [the README](../../README.md#use-it)), and
+[`actions/sdlc-stage`](../../actions/sdlc-stage/README.md) does the work.
 
 ```text
 Actions → SDLC Pipeline → Run workflow (idea), or an issue labelled "sdlc"      one run, one line
@@ -17,13 +17,14 @@ Actions → SDLC Pipeline → Run workflow (idea), or an issue labelled "sdlc"  
   5 · Verify the build + 5 · Security scan → 5 · Ollama reviews the build → 6 · ✋ Open the pull request
 ```
 
-Everything lands on one branch, `feature/<feature>`, in `sdlc/features/<feature>/`.
+Everything lands on one branch, `feature/<feature>`, in `sdlc/features/<feature>/`
+(the `features-dir` input).
 The ✋ jobs wait on the `sdlc-review` environment, so the run pauses at each one
 until you approve. Waiting there uses no runner minutes. Step 4 doesn't use a
-gate: it is a job that polls the feature branch for up to three hours after
-you approve the plan.
+gate: it is a job that polls the feature branch for up to `build-wait-minutes`
+(three hours by default) after you approve the plan.
 
-## Setup (once)
+## Setup (once, in the calling repository)
 
 1. **Turn on HITL approval (Settings → Environments):**
    - Click **New environment** and name it `sdlc-review`:
@@ -58,12 +59,9 @@ you approve the plan.
    stops the run.
 3. **Build, while step 4 waits.** Step 4 freezes the approved documents as the
    `sdlc/<feature>/approved` tag, lists the phases in its summary, and waits.
-   - *Claude Code:* with the `sdlc-github` skill (a claude.ai account skill, not
-     part of this repository), say "use sdlc-github to build feature
-     `<feature>`" in a session on this repository, or give it an idea and it
-     opens the `sdlc` issue itself. It builds each phase on its own branch and
-     pull request, waits for the Phase check before it merges, and reports the
-     pull request step 6 opens.
+   - *A coding agent* such as Claude Code works from the same hand-off as a
+     person: the plan's phases and its "Hand back" section. It can also start
+     runs by opening `sdlc` issues, if it can't start workflows.
    - *A person:* follow the hand-off summary. Build each phase, run the local
      check it prints, and push, either straight to `feature/<feature>` or through
      `phase/<feature>/<n>` pull requests, which get the Phase check. Add a
@@ -72,7 +70,8 @@ you approve the plan.
 4. **Carry on.** When `build-log.md` logs every phase, step 4 finishes and the
    same run verifies the whole branch and has Ollama review the diff against
    the spec. **6 · ✋ Open the pull request** pauses so you can read the
-   verification report and the review, then opens the pull request into `main`.
+   verification report and the review, then opens the pull request into the
+   base branch (the repository's default branch unless `base` says otherwise).
    If step 4 stopped waiting first, run it again with the feature and start
    `build`.
 
@@ -81,8 +80,8 @@ you approve the plan.
 | idea                      | a new feature, numbered after the highest existing one                                                                    |
 | idea + feature            | revises that feature's intent, then spec and plan again, and re-freezes                                                   |
 | feature                   | the first missing document, or the build run if all three exist                                                           |
-| feature + start           | that stage onwards:`spec` or `plan` redoes the design, `build` runs only steps 5-6                                  |
-| an issue labelled`sdlc` | the title is the idea;`feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
+| feature + start           | that stage onwards: `spec` or `plan` redoes the design, `build` runs only steps 5-6                                       |
+| an issue labelled `sdlc`  | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
 
 ## What the checks hold the builder to
 
@@ -92,17 +91,17 @@ you approve the plan.
   stage, never edited by the builder.
 - **Scope.** A changed file outside the phase's `targets`, or any `frozen` file,
   fails. `build-log.md` is the builder's own and is exempt.
-- **Tests.** Each phase's Verify block and the whole suite
-  (`python -m pytest -q && behave --format progress`, the same pytest and
-  behave suites CI runs) must exit zero, and a suite that collects no tests
-  fails.
+- **Tests.** Each phase's Verify block and the whole suite (the caller's
+  `test-command`, `python -m pytest -q` by default) must exit zero, and a suite
+  that collects no tests fails.
 - **Coverage.** The plan has a row for every "Done when" item in `intent.md`; one
   it can't deliver is marked `NOT COVERED`, for you to see at the plan review.
 - **Security.** Secrets in the branch's commits, and HIGH or CRITICAL vulnerable
-  dependencies (with a fix available) or misconfigurations that `main` doesn't
-  already have, fail the security scan, and the pull request waits for it.
-  Findings already on `main` are listed, not blocking. Accept one with
-  `.gitleaksignore` or `.trivyignore`; see `actions/security-scan/README.md`.
+  dependencies (with a fix available) or misconfigurations that the base branch
+  doesn't already have, fail the security scan, and the pull request waits for
+  it. Findings already on the base are listed, not blocking. Accept one with
+  `.gitleaksignore` or `.trivyignore`; see
+  [`actions/security-scan`](../../actions/security-scan/README.md).
 - **Ollama's review** of the build is advisory. It goes into the pull request.
 
 ## Guard rails

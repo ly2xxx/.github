@@ -22,7 +22,6 @@ on:
         default: "3.12"
       install-command:
         type: string
-        default: ""
       test-command:
         type: string
         default: python -m pytest -q
