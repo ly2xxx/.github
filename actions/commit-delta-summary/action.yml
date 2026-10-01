@@ -10,36 +10,23 @@ author: ly2xxx
 inputs:
   base:
     description: Base revision (tag, branch or SHA). Defaults to the event's base.
-    required: false
-    default: ""
   head:
     description: Head revision. Defaults to the event's head.
-    required: false
-    default: ""
   model:
     description: Ollama Cloud model.
-    required: false
-    default: qwen3.5:cloud
+    default: deepseek-v4-flash:cloud
   max-diff-chars:
     description: Truncate the diff beyond this many characters.
-    required: false
     default: "60000"
   outfile:
     description: Where to write the Markdown summary.
-    required: false
     default: commit-delta-summary.md
   ollama-api-key:
     description: Ollama Cloud API key. Forked PRs never receive secrets; the action skips cleanly when empty.
-    required: false
-    default: ""
   custom-prompt:
     description: Additional instructions or custom prompt to append on top of the base prompt.
-    required: false
-    default: ""
   system-prompt:
     description: Override the base prompt instruction.
-    required: false
-    default: ""
 
 outputs:
   summary-file:
@@ -90,19 +77,17 @@ runs:
         MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
         CUSTOM_PROMPT: ${{ inputs.custom-prompt }}
         SYSTEM_PROMPT: ${{ inputs.system-prompt }}
+        BASE_REV: ${{ steps.range.outputs.base }}
+        HEAD_REV: ${{ steps.range.outputs.head }}
+        OUTFILE: ${{ inputs.outfile }}
       run: |
         set -euo pipefail
-        if [ -z "${OLLAMA_API_KEY}" ]; then
+        if [ -z "$OLLAMA_API_KEY" ]; then
           echo "::warning::No Ollama API key (forked PRs never receive secrets) - skipping."
           echo "_Commit delta summary skipped: no API key available._" >> "$GITHUB_STEP_SUMMARY"
-          echo "skipped=true" >> "$GITHUB_OUTPUT"
-          echo "file=" >> "$GITHUB_OUTPUT"
+          printf 'skipped=true\nfile=\n' >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        "${{ github.action_path }}/commit-delta-summary.sh" \
-          "${{ steps.range.outputs.base }}" \
-          "${{ steps.range.outputs.head }}" \
-          "${{ inputs.outfile }}"
-        cat "${{ inputs.outfile }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "skipped=false" >> "$GITHUB_OUTPUT"
-        echo "file=${{ inputs.outfile }}" >> "$GITHUB_OUTPUT"
+        "$GITHUB_ACTION_PATH/commit-delta-summary.sh" "$BASE_REV" "$HEAD_REV" "$OUTFILE"
+        cat "$OUTFILE" >> "$GITHUB_STEP_SUMMARY"
+        printf 'skipped=false\nfile=%s\n' "$OUTFILE" >> "$GITHUB_OUTPUT"

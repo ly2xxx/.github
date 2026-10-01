@@ -6,22 +6,19 @@
 # Env: OLLAMA_API_KEY (required), OLLAMA_MODEL, MAX_DIFF_CHARS, OLLAMA_HOST,
 #      CUSTOM_PROMPT, SYSTEM_PROMPT.
 #
-# Lives beside action.yml so it travels with the composite action -- callers do
-# not need a copy in their own repo. That is the whole point of packaging it as
-# an action rather than a bare workflow.
+# Lives beside action.yml so it travels with the composite action: callers need
+# no copy of it in their own repository.
 set -euo pipefail
 
-base="${1:?usage: commit-delta-summary.sh <base> <head> <outfile> [custom_prompt] [system_prompt]}"
+base="${1:?usage: commit-delta-summary.sh <base> <head> <outfile>}"
 head_rev="${2:?}"
 outfile="${3:?}"
-custom_prompt_arg="${4:-}"
-system_prompt_arg="${5:-}"
 
 MODEL="${OLLAMA_MODEL:-deepseek-v4-flash:cloud}"
 MAX_DIFF_CHARS="${MAX_DIFF_CHARS:-60000}"
 HOST="${OLLAMA_HOST:-https://ollama.com}"
-CUSTOM_PROMPT="${custom_prompt_arg:-${CUSTOM_PROMPT:-}}"
-SYSTEM_PROMPT="${system_prompt_arg:-${SYSTEM_PROMPT:-}}"
+CUSTOM_PROMPT="${CUSTOM_PROMPT:-}"
+SYSTEM_PROMPT="${SYSTEM_PROMPT:-}"
 
 : "${OLLAMA_API_KEY:?OLLAMA_API_KEY is required}"
 command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }

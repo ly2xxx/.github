@@ -10,12 +10,9 @@ author: ly2xxx
 inputs:
   python-version:
     description: Python version for the virtualenv.
-    required: false
     default: "3.12"
   install-command:
     description: Replaces the default install (pyproject.toml, else requirements.txt). Runs with .venv active.
-    required: false
-    default: ""
 
 runs:
   using: composite

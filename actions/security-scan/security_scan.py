@@ -47,11 +47,8 @@ def secrets(merge_base, workdir):
     out = Path(workdir, "gitleaks.json")
     if git("rev-list", "--count", f"{merge_base}..HEAD") == "0":
         return []
-    r = run("gitleaks", "git", "--no-banner", "--redact", "--exit-code", "0",
-            "--log-opts", f"{merge_base}..HEAD", "--report-format", "json", "--report-path", str(out), ".",
-            check=False)
-    if r.returncode != 0:
-        sys.exit(f"gitleaks failed ({r.returncode}):\n{r.stderr.strip()}")
+    run("gitleaks", "git", "--no-banner", "--redact", "--exit-code", "0",
+        "--log-opts", f"{merge_base}..HEAD", "--report-format", "json", "--report-path", str(out), ".")
     return json.loads(out.read_text() or "[]") if out.exists() else []
 
 
@@ -60,9 +57,7 @@ def trivy(target, output, severity, ignorefile):
            "--ignore-unfixed", "--format", "json", "--output", str(output)]
     if ignorefile:
         cmd += ["--ignorefile", str(ignorefile)]
-    r = run(*cmd, str(target), check=False)
-    if r.returncode != 0:
-        sys.exit(f"trivy failed on {target} ({r.returncode}):\n{r.stderr.strip()}")
+    run(*cmd, str(target))
     return json.loads(output.read_text()).get("Results") or []
 
 
@@ -95,55 +90,55 @@ def cell(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def capped(rows, limit, what):
-    if len(rows) <= limit:
-        return rows
-    return rows[:limit] + ["", f"_…and {len(rows) - limit} more {what}; the job log has them all._"]
+def table(columns, rows, limit, what):
+    lines = ["| " + " | ".join(columns) + " |", "|" + " :-- |" * len(columns)]
+    lines += ["| " + " | ".join(row) + " |" for row in rows[:limit]]
+    if len(rows) > limit:
+        lines += ["", f"_…and {len(rows) - limit} more {what}; the job log has them all._"]
+    return lines
+
+
+def count(items):
+    return f"❌ {len(items)}" if items else "✅ none"
 
 
 def report(new_secrets, new, old, severity, base):
     ok = not new_secrets and not new
     vulns = [f for f in new if f["kind"] == "vuln"]
     misconfigs = [f for f in new if f["kind"] == "misconfig"]
+    old_count = {kind: sum(1 for f in old if f["kind"] == kind) for kind in ("vuln", "misconfig")}
     lines = ["# Security scan", f"**Result: {'PASSED' if ok else 'FAILED'}**", "",
              f"Only what this branch adds can fail the scan. Compared with `{base}`; "
              f"vulnerabilities and misconfigurations at {severity.replace(',', ', ')}, "
-             "vulnerabilities only when a fixed version exists.", "",
-             "| Check | New on this branch | Already on the base |", "| :-- | :-- | :-- |",
-             f"| Secrets (gitleaks, this branch's commits) | {'✅ none' if not new_secrets else f'❌ {len(new_secrets)}'} | not scanned |",
-             f"| Vulnerable dependencies (Trivy) | {'✅ none' if not vulns else f'❌ {len(vulns)}'} | "
-             f"{sum(1 for f in old if f['kind'] == 'vuln')} |",
-             f"| Misconfigurations (Trivy) | {'✅ none' if not misconfigs else f'❌ {len(misconfigs)}'} | "
-             f"{sum(1 for f in old if f['kind'] == 'misconfig')} |", ""]
-    if new_secrets:
-        lines += ["## New secrets", "", "| Rule | Where | Commit | Fingerprint |", "| :-- | :-- | :-- | :-- |"]
-        lines += capped([f"| {cell(s.get('RuleID'))} | `{cell(s.get('File'))}:{s.get('StartLine')}` | "
-                         f"`{str(s.get('Commit', ''))[:7]}` | `{cell(s.get('Fingerprint'))}` |" for s in new_secrets],
-                        NEW_ROWS, "secrets")
-        lines += ["", "Remove the secret from the branch's history and rotate it. If it is a false positive, "
-                  "add its fingerprint to `.gitleaksignore`.", ""]
-    if vulns:
-        lines += ["## New vulnerable dependencies", "",
-                  "| Severity | Package | Installed | Fixed in | ID | File |", "| :-- | :-- | :-- | :-- | :-- | :-- |"]
-        lines += capped([f"| {f['severity']} | {cell(f['pkg'])} | {cell(f['installed'])} | {cell(f['fixed'])} | "
-                         f"[{f['id']}]({f['url']}) | `{cell(f['target'])}` |" for f in vulns],
-                        NEW_ROWS, "vulnerabilities")
-        lines += ["", "Upgrade to the fixed version. To accept one, add its ID to `.trivyignore` with a comment "
-                  "saying why.", ""]
-    if misconfigs:
-        lines += ["## New misconfigurations", "", "| Severity | ID | File | Issue |", "| :-- | :-- | :-- | :-- |"]
-        lines += capped([f"| {f['severity']} | [{f['id']}]({f['url']}) | `{cell(f['target'])}` | "
-                         f"{cell(f['title'])}: {cell(f['message'])} |" for f in misconfigs],
-                        NEW_ROWS, "misconfigurations")
-        lines += ["", "Fix the file, or add the ID to `.trivyignore` with a comment saying why.", ""]
+             "vulnerabilities only when a fixed version exists.", ""]
+    lines += table(["Check", "New on this branch", "Already on the base"], [
+        ["Secrets (gitleaks, this branch's commits)", count(new_secrets), "not scanned"],
+        ["Vulnerable dependencies (Trivy)", count(vulns), str(old_count["vuln"])],
+        ["Misconfigurations (Trivy)", count(misconfigs), str(old_count["misconfig"])]], 3, "checks") + [""]
+    sections = [
+        ("New secrets", ["Rule", "Where", "Commit", "Fingerprint"],
+         [[cell(s.get("RuleID")), f"`{cell(s.get('File'))}:{s.get('StartLine')}`", f"`{str(s.get('Commit', ''))[:7]}`",
+           f"`{cell(s.get('Fingerprint'))}`"] for s in new_secrets], "secrets",
+         "Remove the secret from the branch's history and rotate it. If it is a false positive, "
+         "add its fingerprint to `.gitleaksignore`."),
+        ("New vulnerable dependencies", ["Severity", "Package", "Installed", "Fixed in", "ID", "File"],
+         [[f["severity"], cell(f["pkg"]), cell(f["installed"]), cell(f["fixed"]), f"[{f['id']}]({f['url']})",
+           f"`{cell(f['target'])}`"] for f in vulns], "vulnerabilities",
+         "Upgrade to the fixed version. To accept one, add its ID to `.trivyignore` with a comment saying why."),
+        ("New misconfigurations", ["Severity", "ID", "File", "Issue"],
+         [[f["severity"], f"[{f['id']}]({f['url']})", f"`{cell(f['target'])}`",
+           f"{cell(f['title'])}: {cell(f['message'])}"] for f in misconfigs], "misconfigurations",
+         "Fix the file, or add the ID to `.trivyignore` with a comment saying why."),
+    ]
+    for title, columns, rows, what, advice in sections:
+        if rows:
+            lines += [f"## {title}", "", *table(columns, rows, NEW_ROWS, what), "", advice, ""]
     if old:
-        lines += ["<details><summary>Already on the base, not blocking "
-                  f"({len(old)})</summary>", "", "| Severity | Kind | ID | Where |", "| :-- | :-- | :-- | :-- |"]
-        lines += capped([f"| {f['severity']} | {f['kind']} | {f['id']} | `{cell(f['target'])}`"
-                         + (f" ({cell(f['pkg'])} {cell(f['installed'])})" if f["kind"] == "vuln" else "") + " |"
-                         for f in sorted(old, key=lambda f: (f["kind"], f["target"], f["id"]))],
-                        OLD_ROWS, "findings")
-        lines += ["", "</details>", ""]
+        rows = [[f["severity"], f["kind"], f["id"], f"`{cell(f['target'])}`"
+                 + (f" ({cell(f['pkg'])} {cell(f['installed'])})" if f["kind"] == "vuln" else "")]
+                for f in sorted(old, key=lambda f: (f["kind"], f["target"], f["id"]))]
+        lines += [f"<details><summary>Already on the base, not blocking ({len(old)})</summary>", "",
+                  *table(["Severity", "Kind", "ID", "Where"], rows, OLD_ROWS, "findings"), "", "</details>", ""]
     return ok, "\n".join(lines)
 
 
