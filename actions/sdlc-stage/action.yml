@@ -49,6 +49,8 @@ inputs:
     default: "60000"
   test-command:
     description: For verify - the whole test suite. The plan stage is also told it, when given.
+  install-command:
+    description: For stage plan - the caller's install command, when it replaces the default install, so the plan describes how the project is really installed.
   report:
     description: For verify, review and pr - path of the verification report (for review, of the review).
   review:
@@ -124,6 +126,7 @@ runs:
         OLLAMA_TIMEOUT: ${{ inputs.timeout-seconds }}
         MAX_CONTEXT_CHARS: ${{ inputs.max-context-chars }}
         TEST_COMMAND: ${{ inputs.test-command }}
+        INSTALL_COMMAND: ${{ inputs.install-command }}
         REPORT: ${{ inputs.report }}
         REVIEW: ${{ inputs.review }}
         SECURITY: ${{ inputs.security }}

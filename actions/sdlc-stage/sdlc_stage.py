@@ -11,6 +11,7 @@ decide whether it is done.
     sdlc_stage.py verify         check the built branch against the approved plan's phases
     sdlc_stage.py review         Ollama reviews the build against the spec (advisory)
     sdlc_stage.py pr             open the pull request for the feature branch
+    sdlc_stage.py toolchain      what the repository is built with (Python, Node.js), for project-env
 
 Between stages the workflow can wait on a GitHub environment with required
 reviewers: a person reads the document on the feature branch, edits it there
@@ -507,6 +508,106 @@ def resolve(args):
     resolved(feature, start, "build" if start == "build" else "design", ORDER[ORDER.index(start):])
 
 
+# ---------------------------------------------------------------- toolchain
+
+# A Node.js project is installed by the package manager its lockfile belongs to.
+# pnpm comes from npm, at the version package.json's packageManager pins, because
+# corepack can't start recent pnpm releases. yarn comes from corepack, which honours
+# packageManager itself; Node.js 25 and later no longer bundle corepack.
+NODE_LOCKFILES = (("package-lock.json", "npm"), ("npm-shrinkwrap.json", "npm"), ("pnpm-lock.yaml", "pnpm"),
+                  ("yarn.lock", "yarn"))
+YARN_INSTALL = ("(command -v corepack >/dev/null || npm install -g corepack) && corepack enable yarn && "
+                "yarn install --frozen-lockfile")
+NODE_RUNNERS = (("vitest", "npx vitest run <test file>"), ("jest", "npx jest <test file>"),
+                ("mocha", "npx mocha <test file>"))
+
+
+def package_json(root):
+    """package.json as a dict, or {} when it isn't a JSON object."""
+    try:
+        package = json.loads((Path(root) / "package.json").read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    return package if isinstance(package, dict) else {}
+
+
+def node_install(manager, lockfile, package):
+    if manager == "pnpm":
+        pinned = re.fullmatch(r"pnpm@([0-9][0-9A-Za-z.-]*)(\+\S*)?", str(package.get("packageManager", "")))
+        return f"npm install -g pnpm{'@' + pinned.group(1) if pinned else ''} && pnpm install --frozen-lockfile"
+    if manager == "yarn":
+        return YARN_INSTALL
+    return "npm ci" if lockfile else "npm install"
+
+
+def detect_toolchain(root="."):
+    """What the repository is built with, from the files at its top level:
+    Python (pyproject.toml, requirements.txt or setup.py) and Node.js
+    (package.json, installed by its lockfile's package manager). A repository
+    with neither gets Python with only pytest, for the default test command."""
+    root = Path(root)
+
+    def has(name):
+        return (root / name).is_file()
+
+    node = has("package.json")
+    python = any(map(has, ("pyproject.toml", "requirements.txt", "setup.py"))) or not node
+    install, manager, lockfile, runner = [], "", "", ""
+    if python:
+        if has("pyproject.toml"):
+            install.append("uv pip install -e .")
+        elif has("requirements.txt"):
+            install.append("uv pip install -r requirements.txt")
+        if has("requirements-dev.txt"):
+            install.append("uv pip install -r requirements-dev.txt")
+    if node:
+        package = package_json(root)
+        lockfile, manager = next((lock for lock in NODE_LOCKFILES if has(lock[0])), ("", "npm"))
+        install.append(node_install(manager, lockfile, package))
+        used = {name for key in ("dependencies", "devDependencies") if isinstance(package.get(key), dict)
+                for name in package[key]}
+        runner = next((command for name, command in NODE_RUNNERS if name in used), "")
+    return {"python": python, "node": node, "manager": manager, "lockfile": lockfile,
+            "node_version_file": next((f for f in (".nvmrc", ".node-version") if has(f)), ""),
+            "typescript": node and has("tsconfig.json"), "runner": runner, "install": " && ".join(install)}
+
+
+def verification_notes(test_command, install_command=""):
+    """How the verify job builds and tests the repository, for the plan stage."""
+    tc = detect_toolchain()
+    setup, examples = [], []
+    if tc["python"]:
+        setup.append("Python in a virtualenv that is on PATH, with pytest")
+        examples.append("`python -m pytest <test file> -v`")
+    if tc["node"]:
+        version = f"the version in `{tc['node_version_file']}`" if tc["node_version_file"] else "the latest LTS"
+        setup.append(f"Node.js ({version}) with {tc['manager']}")
+        examples.append(f"`{tc['runner']}`" if tc["runner"] else "the repository's own test runner through `npx`")
+    install = install_command or tc["install"]
+    text = (f"The verify job sets up {' and '.join(setup)}, then installs the project with `{install}`."
+            if install else f"The verify job sets up {' and '.join(setup)}; there is nothing to install yet.")
+    text += (" It runs each phase's Verify block from the repository root, then the whole suite with "
+             f"`{test_command}`, which fails if it collects no tests. Run one phase's tests with "
+             + " or ".join(examples) + ".")
+    if tc["lockfile"]:
+        text += f" `{tc['lockfile']}` changes with `package.json`, so a phase that adds a dependency targets both."
+    if tc["typescript"]:
+        text += " The repository has a `tsconfig.json`; `npx tsc --noEmit` type-checks it."
+    return text
+
+
+def toolchain(args):
+    """The step outputs the project-env action sets the repository up from."""
+    tc = detect_toolchain()
+    set_output(python=str(tc["python"]).lower(), node=str(tc["node"]).lower(), install=tc["install"],
+               stacks=" ".join(name for name in ("python", "node") if tc[name]),
+               **{"node-version-file": tc["node_version_file"],
+                  "node-version": "" if tc["node_version_file"] else "lts/*",
+                  "node-cache": "npm" if tc["manager"] == "npm" and tc["lockfile"] else ""})
+    stacks = [name for name, on in (("Python", tc["python"]), (f"Node.js with {tc['manager']}", tc["node"])) if on]
+    print(f"Toolchain: {' and '.join(stacks)}. Install: {tc['install'] or 'nothing yet'}.")
+
+
 # ---------------------------------------------------------------- stage
 
 def header(stage, model, sources):
@@ -533,10 +634,8 @@ def prompt_parts(stage, folder, files, budget, idea):
                      f"Approved tag: `{approved_tag(folder.name)}`, created when this plan is approved; it marks the "
                      "approved documents and the code before the build.")
         if env("TEST_COMMAND"):
-            parts.append("## How verification runs\nThe verify job installs the project into a virtualenv that is "
-                         "on PATH (from pyproject.toml if there is one, otherwise requirements.txt, plus pytest). It "
-                         "runs each phase's Verify block from the repository root, then the whole suite with "
-                         f"`{env('TEST_COMMAND')}`, which fails if it collects no tests.")
+            parts.append("## How verification runs\n"
+                         + verification_notes(env("TEST_COMMAND"), env("INSTALL_COMMAND")))
     parts.append("## Repository files\n" + repo_tree(files))
     if Path("README.md").exists():
         parts.append("## README.md (start)\n" + read("README.md")[:4000])
@@ -865,7 +964,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     commands = {}
     for name, func in (("resolve", resolve), ("stage", stage), ("freeze", freeze), ("wait", wait),
-                       ("verify", verify), ("review", review), ("pr", pr)):
+                       ("verify", verify), ("review", review), ("pr", pr), ("toolchain", toolchain)):
         commands[name] = sub.add_parser(name)
         commands[name].set_defaults(func=func)
     # Each option defaults to the environment variable the action sets.

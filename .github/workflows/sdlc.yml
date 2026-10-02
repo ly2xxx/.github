@@ -38,11 +38,14 @@ on:
       python-version:
         type: string
         default: "3.12"
+      node-version:
+        description: Node.js version for a repository with a package.json. Empty uses .nvmrc or .node-version, else the latest LTS.
+        type: string
       install-command:
-        description: Replaces the default install (pyproject.toml, else requirements.txt).
+        description: Replaces the default install (pyproject.toml or requirements.txt for Python, the lockfile's package manager for package.json). Runs after the toolchains are set up.
         type: string
       test-command:
-        description: The whole test suite. It must collect tests; the plan stage is told it too.
+        description: The whole test suite, e.g. npm test for Node.js. It must exit non-zero when it collects no tests; the plan stage is told it too.
         type: string
         default: python -m pytest -q
       review-environment:
@@ -197,6 +200,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           test-command: ${{ inputs.test-command }}
+          install-command: ${{ inputs.install-command }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
 
   review-plan:
@@ -255,9 +259,10 @@ jobs:
           ref: ${{ needs.resolve.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: ly2xxx/.github/actions/python-env@main
+      - uses: ly2xxx/.github/actions/project-env@main
         with:
           python-version: ${{ inputs.python-version }}
+          node-version: ${{ inputs.node-version }}
           install-command: ${{ inputs.install-command }}
       - uses: ly2xxx/.github/actions/sdlc-stage@main
         with:

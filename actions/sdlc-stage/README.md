@@ -13,6 +13,7 @@ workflows call it once per job with a `command`; its inputs are in [`action.yml`
 | `verify` | 5 · Phase check | Checks the build against the approved plan (below). |
 | `review` | 5 | Ollama compares the diff with the approved spec and plan. Advisory. |
 | `pr` | 6 | Opens or updates the pull request, as a draft if verification failed. |
+| `toolchain` | 5 · Phase check | Reads what the repository is built with (Python; Node.js and its package manager) for [`project-env`](../project-env/action.yml), which sets it up. The plan stage describes the same setup to the model. |
 
 ## What a plan looks like to the checks
 

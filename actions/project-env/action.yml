@@ -1,0 +1,72 @@
+name: Project environment
+description: Set up the toolchains a repository uses (Python with uv, Node.js with npm, pnpm or yarn), install the project, and put them on PATH for the steps after it.
+author: ly2xxx
+
+# The SDLC verify and phase-check jobs run a plan's Verify commands, which call
+# `python`, `pytest`, `npm` or `npx`. What the repository is built with comes from
+# the files at its top level (`sdlc_stage.py toolchain`), the same reading the plan
+# stage describes to the model, so the plan and the verification agree:
+#   Python   pyproject.toml, requirements.txt or setup.py: a .venv on PATH with the
+#            project (pyproject.toml, else requirements.txt, plus requirements-dev.txt) and pytest.
+#   Node.js  package.json: Node.js from node-version, .nvmrc or .node-version (else the
+#            latest LTS), then npm ci, pnpm install or yarn install, by lockfile.
+# Both can apply. A repository with neither gets Python with only pytest. For a
+# subproject or another language, set install-command; it runs after the toolchains.
+
+inputs:
+  python-version:
+    description: Python version for the virtualenv, when the repository uses Python.
+    default: "3.12"
+  node-version:
+    description: Node.js version, when the repository uses Node.js. Empty uses .nvmrc or .node-version, else the latest LTS.
+  install-command:
+    description: Replaces the default install. Runs after the toolchains are set up, with .venv active when the repository uses Python.
+
+outputs:
+  stacks:
+    description: The toolchains set up - python, node, or both.
+    value: ${{ steps.detect.outputs.stacks }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the toolchain
+      id: detect
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/../sdlc-stage/sdlc_stage.py" toolchain
+
+    - if: steps.detect.outputs.python == 'true'
+      uses: astral-sh/setup-uv@v5
+
+    - if: steps.detect.outputs.node == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version || steps.detect.outputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && steps.detect.outputs.node-version-file || '' }}
+        cache: ${{ steps.detect.outputs.node-cache }}
+
+    - name: Install the project
+      shell: bash
+      env:
+        PY: ${{ inputs.python-version }}
+        INSTALL: ${{ inputs.install-command }}
+        DEFAULT_INSTALL: ${{ steps.detect.outputs.install }}
+        USES_PYTHON: ${{ steps.detect.outputs.python }}
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      run: |
+        set -euo pipefail
+        if [ "$USES_PYTHON" = true ]; then
+          uv venv --python "$PY" .venv
+          export VIRTUAL_ENV="$PWD/.venv" PATH="$PWD/.venv/bin:$PATH"
+        fi
+        COMMAND="${INSTALL:-$DEFAULT_INSTALL}"
+        if [ -n "$COMMAND" ]; then
+          bash -euo pipefail -c "$COMMAND"
+        else
+          echo "No pyproject.toml, requirements.txt or package.json yet: installing pytest only."
+        fi
+        if [ "$USES_PYTHON" = true ]; then
+          uv pip install pytest
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+        fi

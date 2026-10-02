@@ -21,21 +21,21 @@ why under Open questions. Never quietly shrink the scope.
 
 ## Phase 1: <short name>
 <!-- phase: 1 -->
-<!-- targets: path/to/file.py, tests/test_new.py -->
-<!-- frozen: tests/test_existing.py -->
+<!-- targets: path/to/source_file, path/to/new_test_file -->
+<!-- frozen: path/to/existing_test_file -->
 
 **Goal:** one sentence a reviewer can check without reading code.
 
 **Changes:**
-- `path/to/file.py`: concrete changes with exact function signatures, argument types, return structures/keys, imports, and exceptions to handle. Be specific enough that an automated coding agent can implement directly without needing exploratory shell probes.
+- `path/to/source_file`: concrete changes with exact function signatures, argument types, return structures/keys, imports, and exceptions to handle. Be specific enough that an automated coding agent can implement directly without needing exploratory shell probes.
 
 **Definition of done:**
-- [ ] `tests/test_new.py::test_name`: which spec behaviour it proves, with the concrete test pattern, assertions, and teardown/cleanup fixtures (e.g. background threads, server instances, mock scopes).
+- [ ] `path/to/new_test_file`, test `test name`: which spec behaviour it proves, with the concrete test pattern, assertions, and teardown/cleanup fixtures (e.g. background threads, server instances, mock scopes).
 - [ ] Any other observable check: a CLI call, an MCP tool call, an HTTP endpoint and its expected output.
 
 **Verify:**
 ```bash
-uv run pytest tests/test_new.py -v
+<the command that runs only this phase's tests, as "How verification runs" names it>
 ```
 
 **Attempt budget:** 3 failed attempts, then stop and revise this plan instead of retrying.
@@ -57,7 +57,8 @@ Rules:
   leave no ambiguity: provide exact function signatures, dictionary keys, return
   structures, framework API usages, and test fixture teardowns directly in the
   plan so the builder never needs to execute exploratory shell probes (e.g.
-  `python -c "import ..."`, environment inspects, or ad-hoc scripts).
+  `python -c "import ..."`, `node -e "require(...)"`, environment inspects, or
+  ad-hoc scripts).
 - Every phase has all three markers. `targets` lists every file the phase may
   create, modify, move or delete: for a move, list both the old and the new
   path. Globs are allowed; `*` does not cross `/`, `**` does.
@@ -67,10 +68,11 @@ Rules:
 - The Verify block holds commands that run from the repository root on a fresh
   checkout with the project installed, exit non-zero on failure, and need no
   network, secrets or running services unless the phase starts them itself.
-  Run tests the way "How verification runs" below says when it is given, for
-  example `uv run pytest tests/test_new.py -v`. Never run the whole suite from
-  inside a test. The builder executes changes via file edits and runs only the
-  prescribed Verify command.
+  Run tests the way "How verification runs" below says when it is given, with
+  the one-phase command it names (for example `python -m pytest
+  tests/test_new.py -v` or `npx vitest run tests/new.test.ts`). Never run the
+  whole suite from inside a test. The builder executes changes via file edits
+  and runs only the prescribed Verify command.
 - Verify blocks run under `bash -e -o pipefail`: first on the builder's
   uncommitted work, then again on the committed result, in the Phase check on
   the phase's pull request and in the final verification, which re-runs every
@@ -81,16 +83,20 @@ Rules:
 - A line starting with `!` never fails a block under `bash -e`. Check that
   something is absent with `test ! -e <path>` for a file, or
   `test -z "$(<command> || true)"` for command output.
-- Tests are required. Every phase adds or extends automated tests (pytest,
-  unless the repository already uses something else) that prove its Definition
+- Tests are required. Every phase adds or extends automated tests (in the
+  framework the repository already uses; in a new project, pytest for Python
+  and vitest for JavaScript or TypeScript) that prove its Definition
   of done, lists them in its targets, and runs them in its Verify block. The
   whole suite also runs at verification and fails if it collects no tests, so a
   plan without tests can't pass. Prefer in-process tests (for example a test
   client) to starting servers; when a phase must start a process, stop it in
   the same command or fixture.
-- Dependencies a phase needs go in the repository's dependency file
-  (`pyproject.toml` if it has one, otherwise `requirements.txt`), and that file
-  is one of the phase's targets.
+- Dependencies a phase needs go in the repository's dependency file:
+  `pyproject.toml` if it has one, otherwise `requirements.txt`, for Python;
+  `package.json` for JavaScript and TypeScript. That file is one of the phase's
+  targets, and so is its lockfile when the repository has one
+  (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`,
+  `poetry.lock`), because adding a dependency changes both.
 - Order the phases so each one leaves the repository working and its tests
   passing.
 - Answer with the Markdown document only, with no preamble.

@@ -9,7 +9,8 @@ deterministic checks decide whether it is done.
 | [`.github/workflows/sdlc.yml`](.github/workflows/README.md) | The SDLC Pipeline: one run from a one-line idea to a pull request. |
 | [`.github/workflows/sdlc-phase.yml`](.github/workflows/README.md) | Checks one phase's pull request into the feature branch. |
 | [`actions/sdlc-stage`](actions/sdlc-stage/README.md) | The pipeline's steps (`sdlc_stage.py`, standard library only). |
-| [`actions/python-env`](actions/python-env/action.yml) | A `.venv` with the project and pytest installed, on `PATH`. |
+| [`actions/project-env`](actions/project-env/action.yml) | The repository's toolchains (Python, Node.js) and dependencies, read from the files at its top level. |
+| [`actions/python-env`](actions/python-env/action.yml) | A `.venv` with the project and pytest installed, on `PATH`. Python only; the workflows use `project-env`. |
 | [`actions/security-scan`](actions/security-scan/README.md) | gitleaks and Trivy, failing only on what a branch adds. |
 | [`actions/commit-delta-summary`](actions/commit-delta-summary/README.md) | An Ollama summary of the changes between two revisions. |
 
@@ -49,6 +50,10 @@ jobs:
   phase:
     uses: ly2xxx/.github/.github/workflows/sdlc-phase.yml@main
 ```
+
+A Node.js or TypeScript repository also passes `test-command` (for example
+`npm test`) to both workflows; [Languages](.github/workflows/README.md#languages)
+says what each kind of repository gets.
 
 [`ly2xxx/interview-playground`](https://github.com/ly2xxx/interview-playground) is a
 complete caller, with an issue trigger and every input.

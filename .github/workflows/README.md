@@ -48,6 +48,27 @@ gate: it is a job that polls the feature branch for up to `build-wait-minutes`
 4. For issue starts, an `sdlc` label. Only people with triage or write access
    can add it, so outside issues can't start a run.
 
+## Languages
+
+Verification sets the repository up from the files at its top level
+([`actions/project-env`](../../actions/project-env/action.yml)), and the plan stage
+describes the same setup to the model, so plans use the repository's own tools:
+
+| The repository has | Verification gets |
+| :-- | :-- |
+| `pyproject.toml`, `requirements.txt` or `setup.py` | Python (`python-version`) in a `.venv` on `PATH`, the project (`pyproject.toml`, else `requirements.txt`, plus `requirements-dev.txt`) and pytest. |
+| `package.json` | Node.js (`node-version`, else `.nvmrc` or `.node-version`, else the latest LTS) and the dependencies: `npm ci` with `package-lock.json`; pnpm, installed from npm at the version `packageManager` pins (else the latest), with `pnpm-lock.yaml`; yarn through corepack with `yarn.lock`; otherwise `npm install`. |
+| both | Both. |
+| neither | Python with only pytest. |
+
+`test-command` defaults to `python -m pytest -q`, so a Node.js repository sets it,
+for example to `npm test`. Whatever it runs must exit non-zero when it finds no
+tests: pytest, Jest and Vitest do by default, and `--passWithNoTests` turns that
+off. For a subproject (a `package.json` below the root) or another language the
+runner image provides, set `install-command` and `test-command`; the install runs
+after the toolchains are set up. Pin pnpm with `packageManager` in `package.json`:
+a newer pnpm than the one that wrote the lockfile can refuse it.
+
 ## Run a feature
 
 1. **Start.** Run **SDLC Pipeline** with an idea and a builder, or open an issue
@@ -92,8 +113,8 @@ gate: it is a job that polls the feature branch for up to `build-wait-minutes`
 - **Scope.** A changed file outside the phase's `targets`, or any `frozen` file,
   fails. `build-log.md` is the builder's own and is exempt.
 - **Tests.** Each phase's Verify block and the whole suite (the caller's
-  `test-command`, `python -m pytest -q` by default) must exit zero, and a suite
-  that collects no tests fails.
+  `test-command`, `python -m pytest -q` by default; see [Languages](#languages))
+  must exit zero, and a suite that collects no tests fails.
 - **Coverage.** The plan has a row for every "Done when" item in `intent.md`; one
   it can't deliver is marked `NOT COVERED`, for you to see at the plan review.
 - **Security.** Secrets in the branch's commits, and HIGH or CRITICAL vulnerable

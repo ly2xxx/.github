@@ -20,9 +20,13 @@ on:
       python-version:
         type: string
         default: "3.12"
+      node-version:
+        description: Node.js version for a repository with a package.json. Empty uses .nvmrc or .node-version, else the latest LTS.
+        type: string
       install-command:
         type: string
       test-command:
+        description: The whole test suite. It must exit non-zero when it collects no tests.
         type: string
         default: python -m pytest -q
       features-dir:
@@ -61,9 +65,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ly2xxx/.github/actions/python-env@main
+      - uses: ly2xxx/.github/actions/project-env@main
         with:
           python-version: ${{ inputs.python-version }}
+          node-version: ${{ inputs.node-version }}
           install-command: ${{ inputs.install-command }}
       - uses: ly2xxx/.github/actions/sdlc-stage@main
         with:
