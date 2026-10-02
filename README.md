@@ -71,3 +71,8 @@ python -m pytest -q        # tests/: the pipeline script and the security report
 ```
 
 CI runs the tests and [actionlint](https://github.com/rhysd/actionlint) on every push and pull request.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE): free for personal and noncommercial use. Business use
+needs a commercial license; see [LICENSING.md](LICENSING.md).
