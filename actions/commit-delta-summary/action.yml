@@ -13,8 +13,7 @@ inputs:
   head:
     description: Head revision. Defaults to the event's head.
   model:
-    description: Ollama Cloud model.
-    default: deepseek-v4-flash:cloud
+    description: Ollama Cloud model. Empty uses OLLAMA_MODEL in actions/defaults.env.
   max-diff-chars:
     description: Truncate the diff beyond this many characters.
     default: "60000"

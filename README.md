@@ -53,6 +53,11 @@ jobs:
 [`ly2xxx/interview-playground`](https://github.com/ly2xxx/interview-playground) is a
 complete caller, with an issue trigger and every input.
 
+## Defaults
+
+Settings a caller leaves empty, such as the Ollama model, fall back to
+[`actions/defaults.env`](actions/defaults.env), the one place each default is set.
+
 ## Versions
 
 `@main` tracks the latest. The `v1` tag is a fixed snapshot whose workflows call

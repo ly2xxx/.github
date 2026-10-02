@@ -44,7 +44,7 @@ FEATURE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 PHASE_BRANCH = re.compile(rf"phase/(?P<feature>{FEATURE_NAME.pattern})/(?P<phase>[A-Za-z0-9._-]+)")
 # A plan's machine-readable markers: <!-- phase: 1 -->, <!-- targets: a.py, tests/** -->, <!-- frozen: b.py -->
 MARKER = re.compile(r"<!--\s*(?P<key>phase|targets|frozen)\s*:\s*(?P<value>.*?)\s*-->", re.IGNORECASE)
-DEFAULT_MODEL = "deepseek-v4-flash:cloud"
+DEFAULTS = ACTION_DIR.parent / "defaults.env"   # the one place shared defaults are set
 BOT = ("github-actions[bot]", "41898283+github-actions[bot]@users.noreply.github.com")
 LOCAL_CHECK = "https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py"
 
@@ -67,6 +67,15 @@ def sh(*cmd, check=True):
 
 def git(*args, check=True):
     return sh("git", "-c", "core.quotePath=false", *args, check=check)
+
+
+def default(name):
+    """A setting's default from actions/defaults.env."""
+    for line in read(DEFAULTS, "").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == name:
+            return value.strip()
+    fail(f"{name} is empty and {DEFAULTS} has no default for it.")
 
 
 def read(path, missing=None):
@@ -143,7 +152,7 @@ def commit_as_bot():
 def ollama_model(command):
     """The model to call. Fails before any work when there is no API key."""
     env("OLLAMA_API_KEY") or fail(f"The {command} command needs ollama-api-key.")
-    return env("OLLAMA_MODEL", DEFAULT_MODEL)
+    return env("OLLAMA_MODEL") or default("OLLAMA_MODEL")
 
 
 def _stream(req, model, deadline):

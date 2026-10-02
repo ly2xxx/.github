@@ -14,13 +14,15 @@ base="${1:?usage: commit-delta-summary.sh <base> <head> <outfile>}"
 head_rev="${2:?}"
 outfile="${3:?}"
 
-MODEL="${OLLAMA_MODEL:-deepseek-v4-flash:cloud}"
+defaults="$(dirname "$0")/../defaults.env"   # the one place shared defaults are set
+MODEL="${OLLAMA_MODEL:-$(sed -n 's/^OLLAMA_MODEL=//p' "$defaults" 2>/dev/null)}"
 MAX_DIFF_CHARS="${MAX_DIFF_CHARS:-60000}"
 HOST="${OLLAMA_HOST:-https://ollama.com}"
 CUSTOM_PROMPT="${CUSTOM_PROMPT:-}"
 SYSTEM_PROMPT="${SYSTEM_PROMPT:-}"
 
 : "${OLLAMA_API_KEY:?OLLAMA_API_KEY is required}"
+: "${MODEL:?OLLAMA_MODEL is empty and ${defaults} has no default for it}"
 command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }
 
 # Resolve both ends up front so a bad ref fails loudly rather than producing an

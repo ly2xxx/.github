@@ -42,9 +42,9 @@ gate: it is a job that polls the feature branch for up to `build-wait-minutes`
      ![Configure SDLC_PR_TOKEN fine-grained personal access token](SDLC_PR_TOKEN/sdlc-pr-token.png)
 
      With the token, CI also runs on the PR. With neither, step 6 fails but prints the pull request's title and body in its log, so it can be opened by hand.
-3. `OLLAMA_API_KEY` secret. Optional variables: `OLLAMA_MODEL` (default
-   `deepseek-v4-flash:cloud`) and `OLLAMA_THINK` (`false` stops a reasoning
-   model thinking for minutes).
+3. `OLLAMA_API_KEY` secret. Optional variables: `OLLAMA_MODEL` (empty uses the
+   default in [`actions/defaults.env`](../../actions/defaults.env)) and
+   `OLLAMA_THINK` (`false` stops a reasoning model thinking for minutes).
 4. For issue starts, an `sdlc` label. Only people with triage or write access
    can add it, so outside issues can't start a run.
 

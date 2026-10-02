@@ -36,8 +36,7 @@ inputs:
     description: Where feature folders live.
     default: sdlc/features
   model:
-    description: Ollama Cloud model for intent, spec, plan and review.
-    default: deepseek-v4-flash:cloud
+    description: Ollama Cloud model for intent, spec, plan and review. Empty uses OLLAMA_MODEL in actions/defaults.env.
   ollama-api-key:
     description: Ollama Cloud API key (commands stage and review).
   think:

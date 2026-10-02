@@ -30,9 +30,8 @@ on:
         type: string
         default: claude
       model:
-        description: Ollama Cloud model for the documents and the review.
+        description: Ollama Cloud model for the documents and the review. Empty uses OLLAMA_MODEL in actions/defaults.env.
         type: string
-        default: deepseek-v4-flash:cloud
       think:
         description: Thinking for reasoning models - true, false, low, medium or high. Empty leaves the default.
         type: string

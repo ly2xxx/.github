@@ -24,7 +24,7 @@ instead of adding a new one each push.
 | Input | Default | |
 | :-- | :-- | :-- |
 | `base`, `head` | from the event | revisions to compare; a push compares `before` with the pushed commit, a pull request its base with its head |
-| `model` | `deepseek-v4-flash:cloud` | Ollama Cloud model |
+| `model` | [`../defaults.env`](../defaults.env) | Ollama Cloud model |
 | `max-diff-chars` | `60000` | the diff is truncated beyond this, with a note |
 | `outfile` | `commit-delta-summary.md` | where the summary is written |
 | `ollama-api-key` | | empty: the action skips and succeeds |
