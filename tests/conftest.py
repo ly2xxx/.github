@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "actions" / "sdlc-stage"), str(ROOT / "actions" / "security-scan")]
+sys.path[:0] = [str(ROOT / "actions" / name) for name in ("sdlc-stage", "security-scan", "quality-scan")]
 
 FEATURE = "001-add-greeting"
 INTENT = "# Intent: Add a greeting\n\n## Done when\n- greet() exists\n- The existing tests still pass.\n"

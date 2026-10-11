@@ -18,29 +18,12 @@ Standard library only. Expects gitleaks and trivy on PATH, and full history
 """
 import argparse
 import json
-import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-
-def run(*cmd, check=True, cwd=None):
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    if check and r.returncode != 0:
-        sys.exit(f"{' '.join(cmd)} failed ({r.returncode}):\n{r.stderr.strip() or r.stdout.strip()}")
-    return r
-
-
-def git(*args, check=True):
-    return run("git", "-c", "core.quotePath=false", *args, check=check).stdout.strip()
-
-
-def base_commit(base):
-    ref = f"origin/{base}"
-    if git("rev-parse", "--verify", "-q", f"{ref}^{{commit}}", check=False) == "":
-        git("fetch", "-q", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/{ref}")
-    return git("merge-base", ref, "HEAD")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from branch_scan import NEW_ROWS, OLD_ROWS, base_commit, cell, count, git, publish, run, table  # noqa: E402
 
 
 def secrets(merge_base, workdir):
@@ -81,25 +64,6 @@ def findings(results):
                           "severity": m.get("Severity"), "title": m.get("Title") or "",
                           "message": m.get("Message") or "", "url": m.get("PrimaryURL") or ""}
     return found
-
-
-NEW_ROWS, OLD_ROWS = 100, 50   # keeps the report, and the pull request body it goes into, a sane size
-
-
-def cell(text):
-    return str(text).replace("|", "\\|").replace("\n", " ")
-
-
-def table(columns, rows, limit, what):
-    lines = ["| " + " | ".join(columns) + " |", "|" + " :-- |" * len(columns)]
-    lines += ["| " + " | ".join(row) + " |" for row in rows[:limit]]
-    if len(rows) > limit:
-        lines += ["", f"_…and {len(rows) - limit} more {what}; the job log has them all._"]
-    return lines
-
-
-def count(items):
-    return f"❌ {len(items)}" if items else "✅ none"
 
 
 def report(new_secrets, new, old, severity, base):
@@ -166,14 +130,9 @@ def main():
     old = [f for k, f in head.items() if k in base]
     ok, text = report(new_secrets, new, old, args.severity, args.base)
 
-    print(text)
+    publish(text, args.report)
     for f in new:   # the report may be capped; the log lists every new finding
         print(f"::warning::new {f['kind']} {f['id']} ({f['severity']}) in {f['target']}")
-    if args.report:
-        Path(args.report).write_text(text + "\n", encoding="utf-8")
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
-            f.write(text + "\n")
     if not ok:
         print("::error::The security scan found problems this branch adds; see the report above.")
         sys.exit(1)
