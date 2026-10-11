@@ -57,6 +57,8 @@ inputs:
     description: For pr - path of the Ollama review to add to the pull request.
   security:
     description: For pr - path of the security scan report to add to the pull request.
+  quality:
+    description: For pr - path of the quality scan report to add to the pull request.
   github-token:
     description: For pr - token that opens the pull request.
 
@@ -130,6 +132,7 @@ runs:
         REPORT: ${{ inputs.report }}
         REVIEW: ${{ inputs.review }}
         SECURITY: ${{ inputs.security }}
+        QUALITY: ${{ inputs.quality }}
         GH_TOKEN: ${{ inputs.github-token }}
         ACTOR: ${{ github.actor }}
         PYTHONUNBUFFERED: "1"

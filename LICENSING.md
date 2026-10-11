@@ -15,6 +15,14 @@ This repository is licensed under the [PolyForm Noncommercial License 1.0.0](LIC
 Any other use, including use at or for a business, needs a commercial license. To ask for one,
 contact [ly2xxx on GitHub](https://github.com/ly2xxx).
 
+## Tools the scans download
+
+The security and quality scans download gitleaks, Trivy and Qlty CLI when they run. Each keeps its
+own license, which this repository's licenses, free or commercial, don't change. Qlty CLI's
+license (Business Source License 1.1) doesn't allow using it for a code quality service or to
+produce an AI coding service; see [`actions/quality-scan`](actions/quality-scan/README.md#license).
+Switch the quality scan off with `quality-scan: false` where that applies.
+
 ## Contributions
 
 A contribution has to be licensable under both the PolyForm Noncommercial terms and the

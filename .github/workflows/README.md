@@ -14,7 +14,7 @@ Actions → SDLC Pipeline → Run workflow (idea), or an issue labelled "sdlc"  
         the builder: Claude Code (builder=claude) or a person (builder=human)
         for each phase: phase/<feature>/<n> → PR into feature/<feature> → SDLC Phase Check → merge
         when build-log.md logs every phase, the same run carries on:
-  5 · Verify the build + 5 · Security scan → 5 · Ollama reviews the build → 6 · ✋ Open the pull request
+  5 · Verify the build + Security scan + Quality scan → 5 · Ollama reviews the build → 6 · ✋ Open the pull request
 ```
 
 Everything lands on one branch, `feature/<feature>`, in `sdlc/features/<feature>/`
@@ -123,6 +123,12 @@ a newer pnpm than the one that wrote the lockfile can refuse it.
   it. Findings already on the base are listed, not blocking. Accept one with
   `.gitleaksignore` or `.trivyignore`; see
   [`actions/security-scan`](../../actions/security-scan/README.md).
+- **Quality.** Lint issues on the lines the branch changed, and code smells
+  (complex or deeply nested functions, duplication) the base branch didn't have,
+  at `quality-level` (default `medium`) and above, fail the quality scan, and the
+  pull request waits for it. Each phase pull request gets the same scan beside
+  the Phase check. Old issues never block. Accept one with a `[[triage]]` entry in
+  `.qlty/qlty.toml`; see [`actions/quality-scan`](../../actions/quality-scan/README.md).
 - **Ollama's review** of the build is advisory. It goes into the pull request.
 
 ## Guard rails
