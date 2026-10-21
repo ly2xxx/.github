@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "H:\\code\\yl\\.github\\.archify\\workflow-sdlc-models-20261021-120000\\candidate.json",
+    "sha256": "901c69c258f3a05d90688c6c7b3c7779d1b7c6632a336085c355f2911d5fa1aa",
+    "bytes": 5334
+  },
+  "artifact": {
+    "path": "H:\\code\\yl\\.github\\.archify\\workflow-sdlc-models-20261021-120000\\sdlc-models.html",
+    "sha256": "c8067538a763b47ce7d9c6a66837af239fb3281406fcb4fe25cb2d39ed7fd95f",
+    "bytes": 827840
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "H:\\code\\yl\\.github\\.archify\\workflow-sdlc-models-20261021-120000\\sdlc-models.finalize.json",
+    "summaryReceipt": "H:\\code\\yl\\.github\\.archify\\workflow-sdlc-models-20261021-120000\\sdlc-models.finalize-summary.json",
+    "browserCheckReceipt": "H:\\code\\yl\\.github\\.archify\\workflow-sdlc-models-20261021-120000\\sdlc-models.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-20T21:12:11.490Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 5666,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}
