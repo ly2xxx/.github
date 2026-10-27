@@ -49,6 +49,29 @@ def test_hand_back_is_always_the_pipelines_own():
     assert [p["id"] for p in s.parse_phases(plan)] == ["1", "2"]
 
 
+def test_repo_tree_lists_every_directory_when_the_files_do_not_fit():
+    assert s.repo_tree({"README.md", "app/a.py", "app/b.py", ".agents/memory/x.md"}) == "README.md\napp/a.py\napp/b.py"
+    files = {"README.md", ".github/workflows/ci.yml", *(f"big/src/f{i}.ts" for i in range(6)),
+             "web/src/pages/a.tsx", "web/src/pages/b.tsx", "lib/db/schema.ts",
+             *(f".agents/memory/n{i}.md" for i in range(50))}
+    tree = s.repo_tree(files, limit=7).splitlines()
+    assert tree[0].startswith("(11 files. A line `dir/ (N files)` stands for files under it that aren't listed")
+    # Every directory is there; the smallest are listed in full first; .agents/ is left out.
+    assert tree[1:] == [".github/workflows/ci.yml", "README.md", "big/src/ (6 files)", "lib/db/schema.ts",
+                        "web/src/pages/a.tsx", "web/src/pages/b.tsx"]
+    assert len(s.repo_tree(files, limit=3).splitlines()) <= 4
+
+
+def test_project_doc_is_the_readme_or_else_an_agent_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for name in ("readme.md", "replit.md", "CLAUDE.md"):
+        (tmp_path / name).write_text(name)
+    assert s.project_doc({"readme.md", "replit.md", "CLAUDE.md"}) == "readme.md"
+    assert s.project_doc({"replit.md", "CLAUDE.md", "docs/AGENTS.md"}) == "CLAUDE.md"
+    assert s.project_doc({"replit.md"}) == "replit.md"
+    assert s.project_doc({"AGENTS.md"}) is None   # tracked, but not in this checkout
+
+
 def test_small_helpers():
     assert s.mentioned_files("see `app/a.py` and b.py, not c.py", {"app/a.py", "x/b.py", "c.py", "y/c.py"}) == \
         ["app/a.py", "c.py", "x/b.py"]

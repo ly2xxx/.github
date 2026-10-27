@@ -69,6 +69,19 @@ runner image provides, set `install-command` and `test-command`; the install run
 after the toolchains are set up. Pin pnpm with `packageManager` in `package.json`:
 a newer pnpm than the one that wrote the lockfile can refuse it.
 
+A workspace (`pnpm-workspace.yaml`, or `workspaces` in `package.json`) gets the
+same setup, and the plan stage also lists its packages with the commands that
+run one package's tests and type-check, such as
+`pnpm --filter <package> exec vitest run <test file>`, because a test runner
+installed in a package isn't on the path at the root. A root `tsconfig.json`
+that only references other projects is described as `npx tsc --build`, and one
+that checks no files isn't offered as a check at all.
+
+The design stages also see the repository's layout: every tracked file, or, in
+a repository too large to list, every directory with its file count (`.agents/`,
+an agent's own notes, is left out), and the start of its `README.md`, else of
+`AGENTS.md`, `CLAUDE.md` or `replit.md`.
+
 ## Run a feature
 
 1. **Start.** Run **SDLC Pipeline** with an idea and a builder, or open an issue
