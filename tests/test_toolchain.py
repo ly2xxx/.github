@@ -120,3 +120,86 @@ def test_the_plan_prompt_describes_the_repositorys_toolchain(repo, monkeypatch):
     parts, _ = s.prompt_parts("plan", folder, {"package.json"}, 60000, "")
     notes = next(p for p in parts if p.startswith("## How verification runs\n"))
     assert "Node.js (the latest LTS) with npm" in notes and "`npm test`" in notes and "`npx jest <test file>`" in notes
+
+
+def test_jsonc_reads_tsconfig_comments_and_trailing_commas():
+    text = ('{\n  // the schema\n  "$schema": "https://json.schemastore.org/tsconfig", /* a block */\n'
+            '  "files": [],\n  "x": "a\\"//b",\n}\n')
+    assert s.jsonc(text) == {"$schema": "https://json.schemastore.org/tsconfig", "files": [], "x": 'a"//b'}
+
+
+@pytest.mark.parametrize("tsconfig, hint", [
+    ("{}", "`npx tsc --noEmit` type-checks it"),
+    ('{"files": [], "references": [{"path": "./lib/db"}]}',
+     "`npx tsc --build` type-checks the projects the root `tsconfig.json` references"),
+    ('{"extends": "./tsconfig.base.json", "files": []}', ""),
+    ("not json", "`npx tsc --noEmit` type-checks it"),
+])
+def test_typecheck_hint(tmp_path, tsconfig, hint):
+    (tmp_path / "tsconfig.json").write_text(tsconfig)
+    assert s.typecheck_hint(tmp_path) == hint
+
+
+def pnpm_workspace(root):
+    (root / "pnpm-workspace.yaml").write_text(
+        "packages:\n  - artifacts/*\n  - 'lib/*'  # shared code\n  - scripts\n  - '!lib/legacy'\n\n"
+        "autoInstallPeers: false\n")
+    for path, package in (
+            ("artifacts/api", {"name": "@w/api", "scripts": {"test": "vitest run", "typecheck": "tsc"},
+                               "devDependencies": {"vitest": "3"}}),
+            ("artifacts/web", {"name": "@w/web", "scripts": {"typecheck": "tsc"}}),
+            ("artifacts/notes", None), ("lib/db", {"name": "@w/db"}), ("lib/legacy", {"name": "@w/legacy"}),
+            ("scripts", {"name": "@w/scripts", "scripts": {"test": "node --test"}})):
+        (root / path).mkdir(parents=True)
+        if package:
+            (root / path / "package.json").write_text(json.dumps(package))
+    return project(root, {"package.json": {"devDependencies": {"typescript": "5"}}, "pnpm-lock.yaml": "",
+                          "tsconfig.json": '{"files": [], "references": [{"path": "./lib/db"}]}'})
+
+
+def test_a_pnpm_workspace_and_its_packages(tmp_path):
+    tc = pnpm_workspace(tmp_path)
+    assert (tc["workspace"], tc["runner"]) == ("pnpm-workspace.yaml", "")
+    assert [(p["path"], p["name"], p["runner"], p["scripts"]) for p in tc["packages"]] == [
+        ("artifacts/api", "@w/api", "vitest run <test file>", ["test", "typecheck"]),
+        ("artifacts/web", "@w/web", "", ["typecheck"]), ("lib/db", "@w/db", "", []),
+        ("scripts", "@w/scripts", "", ["test"])]
+
+
+@pytest.mark.parametrize("files", [
+    {"pnpm-workspace.yaml": "packages: [packages/*, 'tools']\n", "pnpm-lock.yaml": ""},
+    {"package.json": {"workspaces": ["packages/*", "tools"]}, "package-lock.json": ""},
+    {"package.json": {"workspaces": {"packages": ["packages/*", "tools"]}}, "yarn.lock": ""},
+])
+def test_other_ways_to_declare_a_workspace(tmp_path, files):
+    for path in ("packages/a", "tools"):
+        (tmp_path / path).mkdir(parents=True)
+        (tmp_path / path / "package.json").write_text(json.dumps({"name": path.replace("/", "-")}))
+    tc = project(tmp_path, {"package.json": {}, **files})
+    assert [p["path"] for p in tc["packages"]] == ["packages/a", "tools"]
+    assert project(tmp_path / "packages" / "a", {})["packages"] == []
+
+
+def test_commands_in_one_package():
+    assert s.in_package("pnpm", "@w/api", command="vitest run <test file>") == \
+        "pnpm --filter @w/api exec vitest run <test file>"
+    assert s.in_package("npm", "@w/api", command="jest <test file>") == "npm exec --workspace @w/api -- jest <test file>"
+    assert s.in_package("npm", "@w/api", script="test") == "npm run test --workspace @w/api"
+    assert s.in_package("yarn", "@w/api", script="typecheck") == "yarn workspace @w/api run typecheck"
+
+
+def test_verification_notes_for_a_workspace(tmp_path, monkeypatch):
+    pnpm_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    text = s.verification_notes("pnpm -r test")
+    assert "Node.js (the latest LTS) with pnpm" in text and "Run one phase's tests with its package's command below." in text
+    assert ("A dependency goes in the `package.json` of the package that uses it, and `pnpm-lock.yaml` changes "
+            "with it") in text
+    assert "`npx tsc --build` type-checks the projects the root `tsconfig.json` references." in text
+    assert "It is a pnpm workspace (`pnpm-workspace.yaml`)." in text and "never with a bare `npx` at the root" in text
+    assert text.endswith(
+        "- `artifacts/api` (`@w/api`): tests `pnpm --filter @w/api exec vitest run <test file>`; "
+        "type-check `pnpm --filter @w/api run typecheck`\n"
+        "- `artifacts/web` (`@w/web`): type-check `pnpm --filter @w/web run typecheck`\n"
+        "- `scripts` (`@w/scripts`): tests `pnpm --filter @w/scripts run test`\n"
+        "- Other packages: `lib/db`")

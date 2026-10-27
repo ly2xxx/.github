@@ -224,9 +224,42 @@ def unfence(text):
 # ---------------------------------------------------------------- repository context
 
 def repo_tree(files, limit=400):
-    shown = sorted(f for f in files if not f.startswith(("archive/", "image/", "demo/")))
-    extra = len(shown) - limit
-    return "\n".join(shown[:limit]) + (f"\n... and {extra} more" if extra > 0 else "")
+    """The tracked files, in at most `limit` lines. When there are more, every
+    directory gets a line with its file count, as deep as fits, and the files of
+    as many directories as still fit are listed instead, smallest first. An
+    agent's own notes and state (.agents/) are left out."""
+    shown = sorted(f for f in files if not f.startswith(("archive/", "image/", "demo/", ".agents/")))
+    if len(shown) <= limit:
+        return "\n".join(shown)
+    limit -= 1   # for the line that explains the directory lines
+    top, nested = [f for f in shown if "/" not in f], [f for f in shown if "/" in f]
+    groups = {}
+    for depth in range(max((f.count("/") for f in nested), default=0), 0, -1):
+        groups = {}
+        for f in nested:
+            groups.setdefault("/".join(f.split("/")[:-1][:depth]), []).append(f)
+        if len(top) + len(groups) <= limit:
+            break
+    spare, listed = limit - len(top) - len(groups), set()
+    for name, members in sorted(groups.items(), key=lambda group: (len(group[1]), group[0])):
+        if len(members) - 1 <= spare:
+            listed.add(name)
+            spare -= len(members) - 1
+    lines = sorted(top + [f for name in listed for f in groups[name]]
+                   + [f"{name}/ ({len(m)} file{'s' * (len(m) > 1)})" for name, m in groups.items()
+                      if name not in listed])
+    head = [f"({len(shown)} files. A line `dir/ (N files)` stands for files under it that aren't listed; "
+            "target them with a glob such as `dir/**`.)"]
+    extra = len(lines) - limit
+    return "\n".join(head + lines[:limit]) + (f"\n... and {extra} more" if extra > 0 else "")
+
+
+def project_doc(files):
+    """The file at the top of the repository that says how it is laid out and
+    worked on: the README, else the first of AGENTS.md, CLAUDE.md and replit.md."""
+    by_name = {f.lower(): f for f in files if "/" not in f}
+    return next((by_name[n] for n in ("readme.md", "agents.md", "claude.md", "replit.md")
+                 if n in by_name and Path(by_name[n]).is_file()), None)
 
 
 def mentioned_files(text, files):
@@ -531,6 +564,100 @@ def package_json(root):
     return package if isinstance(package, dict) else {}
 
 
+def jsonc(text):
+    """JSON with // and /* */ comments and trailing commas, as tsconfig.json allows."""
+    out, i, quoted = [], 0, False
+    while i < len(text):
+        c = text[i]
+        if quoted and c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quoted:
+            quoted = c != '"'
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            end = text.find("\n" if text[i + 1] == "/" else "*/", i + 2)
+            i = len(text) if end < 0 else end + (0 if text[i + 1] == "/" else 2)
+            continue
+        else:
+            quoted = c == '"'
+        out.append(c)
+        i += 1
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+
+
+def typecheck_hint(root):
+    """How the root tsconfig.json type-checks the repository: `npx tsc --noEmit`
+    for one that includes files, `npx tsc --build` for one that references other
+    projects, and nothing for one that checks no files itself."""
+    try:
+        config = jsonc((Path(root) / "tsconfig.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    config = config if isinstance(config, dict) else {}
+    if config.get("references"):
+        return "`npx tsc --build` type-checks the projects the root `tsconfig.json` references"
+    if config.get("files") == [] and not config.get("include"):
+        return ""
+    return "`npx tsc --noEmit` type-checks it"
+
+
+def dependencies(package):
+    return {name for key in ("dependencies", "devDependencies") if isinstance(package.get(key), dict)
+            for name in package[key]}
+
+
+def workspace_globs(root, package):
+    """A workspace's package globs: `packages` in pnpm-workspace.yaml, else
+    `workspaces` in package.json (npm and yarn)."""
+    path = Path(root) / "pnpm-workspace.yaml"
+    if path.is_file():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        flow = re.search(r"^packages:[ \t]*\[(.*?)\]", text, flags=re.MULTILINE | re.DOTALL)
+        block = re.search(r"^packages:[ \t]*(?:#.*)?\n((?:[ \t]+.*\n?|[ \t]*\n)*)", text, flags=re.MULTILINE)
+        items = (flow.group(1).split(",") if flow else
+                 re.findall(r"^[ \t]+-[ \t]*(.*)$", block.group(1), flags=re.MULTILINE) if block else [])
+        items = [re.sub(r"\s+#.*$", "", item).strip().strip("'\"") for item in items]
+        return [item for item in items if item]
+    found = package.get("workspaces")
+    found = found.get("packages") if isinstance(found, dict) else found
+    return [w for w in found if isinstance(w, str)] if isinstance(found, list) else []
+
+
+def workspace_packages(root, globs):
+    """The packages the globs name, as {path, name, runner, scripts}: every
+    directory with a package.json that no `!` glob excludes."""
+    root, found = Path(root), {}
+    skip = [g[1:].strip("/") for g in globs if g.startswith("!")]
+    for pattern in (g.strip("/") for g in globs if not g.startswith("!")):
+        if not pattern or pattern == "." or ".." in pattern.split("/"):
+            continue
+        for path in root.glob(pattern):
+            rel = path.relative_to(root).as_posix()
+            if ((path / "package.json").is_file() and "node_modules" not in path.parts
+                    and not matches_any(rel, skip) and not matches_any(rel + "/", skip)):
+                found[rel] = package_json(path)
+    packages = []
+    for rel, package in sorted(found.items()):
+        scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+        packages.append({
+            "path": rel, "name": package["name"] if isinstance(package.get("name"), str) else f"./{rel}",
+            "runner": next((command.removeprefix("npx ") for name, command in NODE_RUNNERS
+                            if name in dependencies(package)), ""),
+            "scripts": [s for s in ("test", "typecheck") if s in scripts]})
+    return packages
+
+
+def in_package(manager, package, command="", script=""):
+    """A runner `command`, or a package.json `script`, run in one workspace package
+    from the repository root."""
+    if manager == "pnpm":
+        return f"pnpm --filter {package} " + (f"run {script}" if script else f"exec {command}")
+    if manager == "yarn":
+        return f"yarn workspace {package} run {script or command}"
+    return f"npm run {script} --workspace {package}" if script else f"npm exec --workspace {package} -- {command}"
+
+
 def node_install(manager, lockfile, package):
     if manager == "pnpm":
         pinned = re.fullmatch(r"pnpm@([0-9][0-9A-Za-z.-]*)(\+\S*)?", str(package.get("packageManager", "")))
@@ -552,7 +679,7 @@ def detect_toolchain(root="."):
 
     node = has("package.json")
     python = any(map(has, ("pyproject.toml", "requirements.txt", "setup.py"))) or not node
-    install, manager, lockfile, runner = [], "", "", ""
+    install, manager, lockfile, runner, packages = [], "", "", "", []
     if python:
         if has("pyproject.toml"):
             install.append("uv pip install -e .")
@@ -564,12 +691,14 @@ def detect_toolchain(root="."):
         package = package_json(root)
         lockfile, manager = next((lock for lock in NODE_LOCKFILES if has(lock[0])), ("", "npm"))
         install.append(node_install(manager, lockfile, package))
-        used = {name for key in ("dependencies", "devDependencies") if isinstance(package.get(key), dict)
-                for name in package[key]}
-        runner = next((command for name, command in NODE_RUNNERS if name in used), "")
+        runner = next((command for name, command in NODE_RUNNERS if name in dependencies(package)), "")
+        # A workspace's packages each bring their own dependencies and test runner.
+        packages = workspace_packages(root, workspace_globs(root, package))
     return {"python": python, "node": node, "manager": manager, "lockfile": lockfile,
             "node_version_file": next((f for f in (".nvmrc", ".node-version") if has(f)), ""),
-            "typescript": node and has("tsconfig.json"), "runner": runner, "install": " && ".join(install)}
+            "typescript": node and has("tsconfig.json"), "runner": runner, "install": " && ".join(install),
+            "workspace": ("pnpm-workspace.yaml" if has("pnpm-workspace.yaml") else "package.json") if packages else "",
+            "packages": packages}
 
 
 def verification_notes(test_command, install_command=""):
@@ -582,17 +711,44 @@ def verification_notes(test_command, install_command=""):
     if tc["node"]:
         version = f"the version in `{tc['node_version_file']}`" if tc["node_version_file"] else "the latest LTS"
         setup.append(f"Node.js ({version}) with {tc['manager']}")
-        examples.append(f"`{tc['runner']}`" if tc["runner"] else "the repository's own test runner through `npx`")
+        examples.append(f"`{tc['runner']}`" if tc["runner"] else "its package's command below" if tc["packages"]
+                        else "the repository's own test runner through `npx`")
     install = install_command or tc["install"]
     text = (f"The verify job sets up {' and '.join(setup)}, then installs the project with `{install}`."
             if install else f"The verify job sets up {' and '.join(setup)}; there is nothing to install yet.")
     text += (" It runs each phase's Verify block from the repository root, then the whole suite with "
              f"`{test_command}`, which fails if it collects no tests. Run one phase's tests with "
              + " or ".join(examples) + ".")
-    if tc["lockfile"]:
+    if tc["lockfile"] and tc["packages"]:
+        text += (f" A dependency goes in the `package.json` of the package that uses it, and `{tc['lockfile']}` "
+                 "changes with it, so a phase that adds one targets both.")
+    elif tc["lockfile"]:
         text += f" `{tc['lockfile']}` changes with `package.json`, so a phase that adds a dependency targets both."
-    if tc["typescript"]:
-        text += " The repository has a `tsconfig.json`; `npx tsc --noEmit` type-checks it."
+    if tc["typescript"] and (hint := typecheck_hint(".")):
+        text += f" The repository has a `tsconfig.json`; {hint}."
+    if tc["packages"]:
+        text += "\n\n" + workspace_notes(tc)
+    return text
+
+
+def workspace_notes(tc, limit=30):
+    """The commands that test and type-check each package of a workspace."""
+    lines, others = [], []
+    for p in tc["packages"]:
+        how = [f"tests `{in_package(tc['manager'], p['name'], command=p['runner'])}`" if p["runner"] else
+               f"tests `{in_package(tc['manager'], p['name'], script='test')}`" if "test" in p["scripts"] else ""]
+        if "typecheck" in p["scripts"]:
+            how.append(f"type-check `{in_package(tc['manager'], p['name'], script='typecheck')}`")
+        if any(how) and len(lines) < limit:
+            lines.append(f"- `{p['path']}` (`{p['name']}`): " + "; ".join(h for h in how if h))
+        else:
+            others.append(p["path"])
+    text = (f"It is a {tc['manager']} workspace (`{tc['workspace']}`). Each package has its own dependencies, "
+            "test runner and configuration, so a Verify block runs a package's tests from the repository root "
+            "with the package's command below, giving the test file's path relative to the package, never with "
+            "a bare `npx` at the root:\n" + "\n".join(lines))
+    if others:
+        text += f"\n- Other packages: {code_list(others)}"
     return text
 
 
@@ -605,7 +761,8 @@ def toolchain(args):
                   "node-version": "" if tc["node_version_file"] else "lts/*",
                   "node-cache": "npm" if tc["manager"] == "npm" and tc["lockfile"] else ""})
     stacks = [name for name, on in (("Python", tc["python"]), (f"Node.js with {tc['manager']}", tc["node"])) if on]
-    print(f"Toolchain: {' and '.join(stacks)}. Install: {tc['install'] or 'nothing yet'}.")
+    workspace = f", a workspace of {len(tc['packages'])} packages" if tc["packages"] else ""
+    print(f"Toolchain: {' and '.join(stacks)}{workspace}. Install: {tc['install'] or 'nothing yet'}.")
 
 
 # ---------------------------------------------------------------- stage
@@ -637,8 +794,8 @@ def prompt_parts(stage, folder, files, budget, idea):
             parts.append("## How verification runs\n"
                          + verification_notes(env("TEST_COMMAND"), env("INSTALL_COMMAND")))
     parts.append("## Repository files\n" + repo_tree(files))
-    if Path("README.md").exists():
-        parts.append("## README.md (start)\n" + read("README.md")[:4000])
+    if doc := project_doc(files):
+        parts.append(f"## {doc} (start)\n" + read(doc)[:4000])
     used = sum(map(len, parts))
     for path in named:
         if path.startswith(str(folder)) or budget - used < 1000:
