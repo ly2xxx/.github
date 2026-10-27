@@ -1,0 +1,56 @@
+name: Quality scan
+description: Lint issues and code smells (complexity, nesting, duplication) that a branch adds, with Qlty CLI. Old issues never block.
+author: ly2xxx
+
+# Qlty is installed from its GitHub release at a pinned version and checked against
+# a pinned SHA-256 checksum, so a moved tag or a swapped release asset fails the
+# install instead of running. To upgrade, change the version and its checksum
+# together (the release's qlty-x86_64-unknown-linux-gnu.tar.xz.sha256 has it).
+# Qlty then downloads the linters the configuration enables, at the versions
+# that Qlty release pins.
+
+inputs:
+  base:
+    description: The branch the feature goes into, for example main. Only what the branch adds since it left it can fail the scan.
+    required: true
+  level:
+    description: The lowest level that fails the scan - low, medium or high.
+    default: medium
+  report:
+    description: Also write the Markdown report to this path.
+  qlty-version:
+    default: 0.653.0
+  qlty-sha256:
+    description: SHA-256 of qlty-x86_64-unknown-linux-gnu.tar.xz.
+    default: 4836a710b7a3ba67d729121ba48fdfc4e183f414b88488c1bc598247974e39a6
+
+runs:
+  using: composite
+  steps:
+    - name: Install Qlty CLI (pinned, checksum-verified)
+      shell: bash
+      env:
+        QLTY_VERSION: ${{ inputs.qlty-version }}
+        QLTY_SHA256: ${{ inputs.qlty-sha256 }}
+      run: |
+        set -euo pipefail
+        if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
+          echo "::error::The quality scan runs on Linux x86_64 runners only."; exit 1
+        fi
+        bin="$RUNNER_TEMP/quality-scan-bin"; mkdir -p "$bin"; cd "$RUNNER_TEMP"
+        curl -sSfL --retry 3 -o qlty.tar.xz \
+          "https://github.com/qltysh/qlty/releases/download/v${QLTY_VERSION}/qlty-x86_64-unknown-linux-gnu.tar.xz"
+        echo "$QLTY_SHA256  qlty.tar.xz" | sha256sum -c --quiet - || { echo "::error::qlty.tar.xz doesn't match its pinned checksum."; exit 1; }
+        tar -xJf qlty.tar.xz -C "$bin" --strip-components 1 qlty-x86_64-unknown-linux-gnu/qlty
+        echo "$bin" >> "$GITHUB_PATH"
+        "$bin/qlty" --version
+
+    - name: Scan what this branch adds
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        LEVEL: ${{ inputs.level }}
+        REPORT: ${{ inputs.report }}
+        QLTY_TELEMETRY: "off"
+        PYTHONUNBUFFERED: "1"
+      run: python3 "$GITHUB_ACTION_PATH/quality_scan.py" --base "$BASE" --level "$LEVEL" ${REPORT:+--report "$REPORT"}

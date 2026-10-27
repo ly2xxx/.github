@@ -4,7 +4,8 @@ name: SDLC Phase Check (reusable)
 # builder's one phase, checked against the approved plan before it is merged.
 # It fails on a file outside phase <n>'s targets, a frozen file changed, an
 # approved document changed, a failing Verify block for phases 1..n, or a
-# failing (or empty) test suite.
+# failing (or empty) test suite. Beside it, the quality scan fails on the lint
+# issues and code smells the phase adds.
 #
 # Called from a repository's own workflow:
 #   on:
@@ -32,6 +33,14 @@ on:
       features-dir:
         type: string
         default: sdlc/features
+      quality-scan:
+        description: Check what the phase adds for lint issues and code smells with Qlty.
+        type: boolean
+        default: true
+      quality-level:
+        description: The lowest Qlty level that fails the quality scan - low, medium or high.
+        type: string
+        default: medium
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -85,3 +94,20 @@ jobs:
           name: phase-report
           path: ${{ runner.temp }}/phase-report.md
           if-no-files-found: ignore
+
+  quality:
+    name: Quality scan
+    if: startsWith(github.head_ref, 'phase/') && inputs.quality-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read        # reads the branch and its history; runs no project code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ly2xxx/.github/actions/quality-scan@main
+        with:
+          base: ${{ github.base_ref }}
+          level: ${{ inputs.quality-level }}

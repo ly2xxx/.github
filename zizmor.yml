@@ -1,0 +1,10 @@
+# zizmor, which the quality scan runs on workflows. This repository's workflows call
+# its own actions at a branch or tag (main, or v1 in the snapshot) on purpose, so a
+# caller's one ref picks the version of everything. Other actions keep zizmor's
+# defaults: GitHub's own by tag, any other by commit SHA.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "actions/*": ref-pin
+        "ly2xxx/.github/*": any

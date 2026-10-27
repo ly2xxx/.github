@@ -1089,7 +1089,7 @@ def pr(args):
     title = f"{feature}: {title_m.group(1).strip() if title_m else 'feature'}"
     tag, plan = approved_plan(feature)
     body = pr_body(feature, tag, parse_phases(plan), passed, [
-        read(args.report, "_The verification report is missing._"), read(args.security, ""),
+        read(args.report, "_The verification report is missing._"), read(args.security, ""), read(args.quality, ""),
         read(args.review, "_The Ollama review didn't run._") if args.review else ""])
     if url := sh("gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq", ".[0].url"):
         sh("gh", "pr", "edit", url, "--title", title, "--body", body)
@@ -1136,7 +1136,8 @@ def main():
                                          ("review", "--report", "REPORT", "also write the review to this file"),
                                          ("pr", "--report", "REPORT", "the verification report"),
                                          ("pr", "--review", "REVIEW", "the Ollama review"),
-                                         ("pr", "--security", "SECURITY", "the security scan report")):
+                                         ("pr", "--security", "SECURITY", "the security scan report"),
+                                         ("pr", "--quality", "QUALITY", "the quality scan report")):
         commands[name].add_argument(option, default=env(variable), help=text)
     args = ap.parse_args()
     args.func(args)

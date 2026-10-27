@@ -1,7 +1,8 @@
 name: CI
 
-# This repository's own checks: the unit tests in tests/ and actionlint over the
-# workflows. The other workflows here are reusable ones, for callers.
+# This repository's own checks: the unit tests in tests/, actionlint over the
+# workflows, and on a pull request the quality scan, from this checkout. The other
+# workflows here are reusable ones, for callers.
 
 on:
   push:
@@ -44,3 +45,16 @@ jobs:
           echo "$ACTIONLINT_SHA256  actionlint.tar.gz" | sha256sum -c --quiet -
           tar -xzf actionlint.tar.gz actionlint
       - run: ./actionlint -color
+
+  quality:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./actions/quality-scan
+        with:
+          base: ${{ github.base_ref }}

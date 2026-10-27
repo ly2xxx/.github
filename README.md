@@ -12,6 +12,7 @@ deterministic checks decide whether it is done.
 | [`actions/project-env`](actions/project-env/action.yml) | The repository's toolchains (Python, Node.js) and dependencies, read from the files at its top level. |
 | [`actions/python-env`](actions/python-env/action.yml) | A `.venv` with the project and pytest installed, on `PATH`. Python only; the workflows use `project-env`. |
 | [`actions/security-scan`](actions/security-scan/README.md) | gitleaks and Trivy, failing only on what a branch adds. |
+| [`actions/quality-scan`](actions/quality-scan/README.md) | Qlty lint and code smells, failing only on what a branch adds. |
 | [`actions/commit-delta-summary`](actions/commit-delta-summary/README.md) | An Ollama summary of the changes between two revisions. |
 
 ## Use it
@@ -72,12 +73,14 @@ the actions at `@v1` too, so a run uses one version throughout. A paused run on
 ## Develop
 
 ```bash
-python -m pytest -q        # tests/: the pipeline script and the security report, offline
+python -m pytest -q        # tests/: the pipeline script and both scan reports, offline
 ```
 
-CI runs the tests and [actionlint](https://github.com/rhysd/actionlint) on every push and pull request.
+CI runs the tests and [actionlint](https://github.com/rhysd/actionlint) on every push and pull request,
+and the quality scan, from the checkout, on every pull request.
 
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE): free for personal and noncommercial use. Business use
-needs a commercial license; see [LICENSING.md](LICENSING.md).
+needs a commercial license; see [LICENSING.md](LICENSING.md). The tools the scans download keep
+their own licenses; Qlty CLI's has limits of its own (see [`actions/quality-scan`](actions/quality-scan/README.md#license)).
