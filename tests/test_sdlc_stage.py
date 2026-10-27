@@ -47,6 +47,30 @@ def test_hand_back_is_always_the_pipelines_own():
     assert f"`sdlc/features/{FEATURE}/build-log.md`" in plan and f"push it to `feature/{FEATURE}`" in plan
     assert s.with_hand_back(plan, folder) == plan
     assert [p["id"] for p in s.parse_phases(plan)] == ["1", "2"]
+    allowed = s.with_hand_back(plan, folder, [".agents/memory/**"])
+    assert "`build-log.md`, plus files matching the repository's allowed paths (`.agents/memory/**`)." in allowed
+
+
+def test_repo_tree_lists_every_directory_when_the_files_do_not_fit():
+    small = {"README.md", "app/a.py", "app/b.py", ".agents/x.md"}
+    assert s.repo_tree(small) == ".agents/x.md\nREADME.md\napp/a.py\napp/b.py"
+    files = {"README.md", *(f"big/src/f{i}.ts" for i in range(6)), "web/src/pages/a.tsx", "web/src/pages/b.tsx",
+             *(f".agents/memory/n{i}.md" for i in range(3)), "lib/db/schema.ts"}
+    tree = s.repo_tree(files, limit=7).splitlines()
+    assert tree[0].startswith("(13 files. A line `dir/ (N files)` stands for files under it")
+    # Smallest directories are listed in full first; dot directories come last.
+    assert tree[1:] == [".agents/memory/ (3 files)", "README.md", "big/src/ (6 files)", "lib/db/schema.ts",
+                        "web/src/pages/a.tsx", "web/src/pages/b.tsx"]
+    assert len(s.repo_tree(files, limit=3).splitlines()) <= 5
+
+
+def test_project_docs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for name in ("readme.md", "replit.md", "CLAUDE.md"):
+        (tmp_path / name).write_text(name)
+    assert s.project_docs({"readme.md", "replit.md", "CLAUDE.md", "docs/AGENTS.md"}) == ["readme.md", "CLAUDE.md"]
+    assert s.project_docs({"replit.md"}) == ["replit.md"]
+    assert s.project_docs({"AGENTS.md"}) == []
 
 
 def test_small_helpers():
@@ -63,7 +87,8 @@ def test_resolve_numbers_a_new_idea(repo, monkeypatch, outputs):
     assert run(["resolve"], monkeypatch) == 0
     assert outputs() == {
         "feature": "002-add-a-farewell-too", "branch": "feature/002-add-a-farewell-too", "start": "intent",
-        "base": "main", "mode": "design", "design": "true", "intent": "true", "spec": "true", "plan": "true"}
+        "base": "main", "mode": "design", "design": "true", "freeze": "true",
+        "intent": "true", "spec": "true", "plan": "true"}
 
 
 def test_resolve_from_an_issue(repo, monkeypatch, outputs):
@@ -71,6 +96,54 @@ def test_resolve_from_an_issue(repo, monkeypatch, outputs):
     monkeypatch.setenv("SDLC_ISSUE_BODY", f"feature: {FEATURE}\nstart: plan")
     assert run(["resolve"], monkeypatch) == 0
     assert (outputs()["start"], outputs()["intent"], outputs()["plan"]) == ("plan", "false", "true")
+
+
+def test_review_gate_stop_writes_one_document_per_run(repo, monkeypatch, outputs):
+    monkeypatch.setenv("SDLC_REVIEW_GATE", "stop")
+    monkeypatch.setenv("SDLC_IDEA", "Add a farewell")
+    assert run(["resolve"], monkeypatch) == 0
+    got = outputs()
+    assert (got["start"], got["intent"], got["spec"], got["plan"], got["freeze"]) == \
+        ("intent", "true", "false", "false", "false")
+    monkeypatch.setenv("SDLC_IDEA", "")
+    monkeypatch.setenv("SDLC_FEATURE", FEATURE)
+    monkeypatch.setenv("SDLC_START", "plan")
+    assert run(["resolve"], monkeypatch) == 0
+    assert (outputs()["plan"], outputs()["freeze"], outputs()["mode"]) == ("true", "false", "design")
+
+
+def test_review_gate_stop_carries_on_from_where_the_feature_is(repo, monkeypatch, outputs):
+    monkeypatch.setenv("SDLC_REVIEW_GATE", "stop")
+    monkeypatch.setenv("SDLC_FEATURE", FEATURE)
+    folder = repo / "sdlc" / "features" / FEATURE
+
+    def start():
+        assert run(["resolve"], monkeypatch) == 0
+        got = outputs()
+        return got["start"], got["mode"], got["freeze"], [name for name in s.STAGES if got[name] == "true"]
+
+    # The documents are approved and tagged, and none changed since: the build run.
+    assert start() == ("build", "build", "false", [])
+    # intent.md revised after spec.md was written: spec.md is written again, alone.
+    (folder / "intent.md").write_text(INTENT + "- One more thing.\n")
+    git(repo, "commit", "-qam", "revise the intent")
+    git(repo, "push", "-q", "origin", f"feature/{FEATURE}")
+    assert start() == ("spec", "design", "false", ["spec"])
+    for name in ("spec", "plan"):
+        (folder / f"{name}.md").write_text((folder / f"{name}.md").read_text() + "\nRevised.\n")
+        git(repo, "commit", "-qam", f"rewrite {name}")
+    git(repo, "push", "-q", "origin", f"feature/{FEATURE}")
+    # Every document is in order but differs from the tag: this run freezes them.
+    assert start() == ("freeze", "design", "true", [])
+    monkeypatch.setenv("SDLC_REVIEW_GATE", "manual")
+    assert run(["resolve"], monkeypatch) == 1
+
+
+def test_an_issue_can_say_carry_on(repo, monkeypatch, outputs):
+    monkeypatch.setenv("SDLC_IDEA", "Anything")
+    monkeypatch.setenv("SDLC_ISSUE_BODY", f"feature: {FEATURE}\nstart: auto")
+    assert run(["resolve"], monkeypatch) == 0
+    assert (outputs()["feature"], outputs()["start"], outputs()["intent"]) == (FEATURE, "build", "false")
 
 
 def test_a_merged_phase_hands_back_once_every_phase_is_logged(repo, monkeypatch, outputs):
@@ -98,6 +171,15 @@ def test_verify_one_phase_against_uncommitted_work(repo, monkeypatch):
     assert run(["verify", "--feature", FEATURE, "--phase", "1", "--report", str(report)], monkeypatch) == 1
     text = report.read_text()
     assert "**1 outside the plan:** `stray.txt`" in text and "**modified:** `tests/test_old.py`" in text
+    # Allowed paths let any phase change a file, but a frozen file stays frozen.
+    assert run(["verify", "--feature", FEATURE, "--phase", "1", "--report", str(report),
+                "--allowed-paths", "*.txt, tests/**"], monkeypatch) == 1
+    text = report.read_text()
+    assert "All inside the plan's targets or the allowed paths." in text
+    assert "**Allowed paths:** 1 file(s) outside the targets: `stray.txt`" in text
+    assert "**modified:** `tests/test_old.py`" in text
+    git(repo, "checkout", "tests/test_old.py")
+    assert run(["verify", "--feature", FEATURE, "--phase", "1", "--allowed-paths", "*.txt"], monkeypatch) == 0
 
 
 def test_verify_the_whole_feature_and_its_contract(repo, monkeypatch):

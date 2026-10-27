@@ -15,10 +15,12 @@ decide whether it is done.
 
 Between stages the workflow can wait on a GitHub environment with required
 reviewers: a person reads the document on the feature branch, edits it there
-if it needs changing, and approves. `freeze` then tags the approved documents
-as sdlc/<feature>/approved, and `verify` fails if the builder changes them, so
-the builder can't rewrite the plan it is checked against. `verify` runs locally
-too, from a copy of this file:
+if it needs changing, and approves. Where an environment can't have reviewers
+(a private repository below GitHub Enterprise), review-gate `stop` ends the run
+after each document instead, and starting the next run approves it. `freeze`
+then tags the approved documents as sdlc/<feature>/approved, and `verify` fails
+if the builder changes them, so the builder can't rewrite the plan it is checked
+against. `verify` runs locally too, from a copy of this file:
 
     curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py
     python /tmp/sdlc_stage.py verify --feature 002-x --phase 1 --test-command "python -m pytest -q"
@@ -41,6 +43,10 @@ from pathlib import Path
 ACTION_DIR = Path(__file__).resolve().parent
 STAGES = ("intent", "spec", "plan")
 ORDER = (*STAGES, "build")
+# How a person approves each document: a GitHub environment with required reviewers
+# pauses the run (environment), or the run ends after each document and starting the
+# next run approves it (stop), for private repositories whose plan has no reviewers.
+GATES = ("environment", "stop")
 FEATURE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 PHASE_BRANCH = re.compile(rf"phase/(?P<feature>{FEATURE_NAME.pattern})/(?P<phase>[A-Za-z0-9._-]+)")
 # A plan's machine-readable markers: <!-- phase: 1 -->, <!-- targets: a.py, tests/** -->, <!-- frozen: b.py -->
@@ -115,6 +121,17 @@ def repo_url(*parts):
 
 def code_list(paths):
     return ", ".join(f"`{p}`" for p in paths)
+
+
+def path_list(text):
+    """Globs from a comma- or newline-separated setting."""
+    return [p.strip() for p in re.split(r"[,\n]", text or "") if p.strip()]
+
+
+def allowed_paths():
+    """Globs every phase may change without listing them as targets (the
+    allowed-paths input), such as a repository's own agent notes."""
+    return path_list(env("SDLC_ALLOWED_PATHS"))
 
 
 # ---------------------------------------------------------------- the feature
@@ -224,9 +241,48 @@ def unfence(text):
 # ---------------------------------------------------------------- repository context
 
 def repo_tree(files, limit=400):
+    """The tracked files, in at most `limit` lines. When there are more, every
+    directory gets a line with its file count, as deep as fits, and the files of
+    as many directories as still fit are listed instead, smallest first. Dot
+    directories other than .github (tool and agent state) are listed last."""
     shown = sorted(f for f in files if not f.startswith(("archive/", "image/", "demo/")))
-    extra = len(shown) - limit
-    return "\n".join(shown[:limit]) + (f"\n... and {extra} more" if extra > 0 else "")
+    if len(shown) <= limit:
+        return "\n".join(shown)
+    limit -= 1   # for the line that explains the directory lines
+    top, nested = [f for f in shown if "/" not in f], [f for f in shown if "/" in f]
+    groups = {}
+    for depth in range(max((f.count("/") for f in nested), default=0), 0, -1):
+        groups = {}
+        for f in nested:
+            groups.setdefault("/".join(f.split("/")[:-1][:depth]), []).append(f)
+        if len(top) + len(groups) <= limit:
+            break
+    spare, listed = limit - len(top) - len(groups), set()
+
+    def priority(group):
+        name, members = group
+        return name.startswith(".") and not name.startswith(".github"), len(members), name
+
+    for name, members in sorted(groups.items(), key=priority):
+        if len(members) - 1 <= spare:
+            listed.add(name)
+            spare -= len(members) - 1
+    lines = sorted(top + [f for name in listed for f in groups[name]]
+                   + [f"{name}/ ({len(m)} file{'s' * (len(m) > 1)})" for name, m in groups.items()
+                      if name not in listed])
+    head = [f"({len(shown)} files. A line `dir/ (N files)` stands for files under it that aren't listed; "
+            "target them with a glob such as `dir/**`.)"]
+    extra = len(lines) - limit
+    return "\n".join(head + lines[:limit]) + (f"\n... and {extra} more" if extra > 0 else "")
+
+
+def project_docs(files):
+    """The README, and the first of AGENTS.md, CLAUDE.md and replit.md: the files at
+    the top of a repository that say how it is laid out and worked on."""
+    by_name = {f.lower(): f for f in files if "/" not in f}
+    readme = [by_name["readme.md"]] if "readme.md" in by_name else []
+    agent = next((by_name[n] for n in ("agents.md", "claude.md", "replit.md") if n in by_name), None)
+    return [doc for doc in readme + [agent] if doc and Path(doc).is_file()]
 
 
 def mentioned_files(text, files):
@@ -329,7 +385,7 @@ When every phase is built and its Verify block passes:
    you ran and its result, and any deviation from this plan (or "none").
 2. Commit it and push it to `{branch}`.
 
-Commit only this plan's targets and `build-log.md`. Leave every other file alone,
+Commit only this plan's targets and `build-log.md`{allowed}. Leave every other file alone,
 including other features' documents under `sdlc/features/`, even for formatting;
 verification fails on any file outside the targets.
 
@@ -338,11 +394,13 @@ verifies the whole branch and opens the pull request.
 """
 
 
-def with_hand_back(plan, folder):
+def with_hand_back(plan, folder, allowed=()):
     """Every plan ends with the same instructions for its builder, whoever or
     whatever it is: this text, replacing any the model wrote."""
     plan = re.sub(r"^## Hand back\b.*?(?=^## |\Z)", "", plan, flags=re.MULTILINE | re.DOTALL)
-    return plan.rstrip() + "\n\n" + HAND_BACK.format(folder=folder.as_posix(), branch=branch_for(folder.name))
+    extra = f", plus files matching the repository's allowed paths ({code_list(allowed)})" if allowed else ""
+    return plan.rstrip() + "\n\n" + HAND_BACK.format(folder=folder.as_posix(), branch=branch_for(folder.name),
+                                                     allowed=extra)
 
 
 def logged_ids(text):
@@ -417,6 +475,29 @@ def contract_changes(ref, folder):
     return [str(p) for p in paths if blob(ref, p.as_posix()) != (p.read_bytes() if p.exists() else None)]
 
 
+def frozen(feature, folder):
+    """Whether the approved tag holds the documents as they are on the branch."""
+    tag = approved_ref(feature)
+    return bool(tag) and not contract_changes(tag, folder)
+
+
+def first_stale(folder):
+    """The first document that is missing, or that was last changed before the one
+    it is written from (intent.md changed after spec.md, say), or None when all
+    three are in order."""
+    last = {}
+    for name in STAGES:
+        path = folder / f"{name}.md"
+        if not path.exists():
+            return name
+        last[name] = git("log", "-1", "--format=%H", "--", path.as_posix())
+    for before, name in zip(STAGES, STAGES[1:]):
+        if not (last[before] and last[name]) or subprocess.run(
+                ["git", "merge-base", "--is-ancestor", last[before], last[name]]).returncode:
+            return name
+    return None
+
+
 def new_feature_name(features_dir, idea):
     """NNN-slug-of-the-idea, numbered after the highest feature on the base or on
     any feature/ branch, so two ideas in flight don't share a number."""
@@ -433,23 +514,30 @@ def new_feature_name(features_dir, idea):
 def from_issue(body):
     """The `feature: <name>` and `start: <stage>` lines of an issue body (None when absent)."""
     feature = re.search(rf"^\s*feature:\s*({FEATURE_NAME.pattern})\s*$", body, flags=re.MULTILINE)
-    start = re.search(r"^\s*start:\s*(spec|plan|build)\s*$", body, flags=re.MULTILINE)
+    start = re.search(r"^\s*start:\s*(auto|spec|plan|build)\s*$", body, flags=re.MULTILINE)
     return (feature and feature.group(1)), (start and start.group(1))
 
 
-def resolved(feature, start, mode, runs=()):
+def resolved(feature, start, mode, runs=(), freeze=False):
     """mode: design (this run writes documents and hands the plan to the builder),
-    build (it verifies, reviews and opens the pull request) or none."""
+    build (it verifies, reviews and opens the pull request) or none. freeze: whether
+    step 4 tags the documents and hands them off in this run."""
     set_output(feature=feature, branch=branch_for(feature), start=start, base=env("BASE_REF"), mode=mode,
-               design=str(mode == "design").lower(), **{s: str(s in runs).lower() for s in STAGES})
+               design=str(mode == "design").lower(), freeze=str(freeze).lower(),
+               **{s: str(s in runs).lower() for s in STAGES})
 
 
 def resolve(args):
     idea, start, feature = env("SDLC_IDEA"), env("SDLC_START", "auto"), env("SDLC_FEATURE")
+    gate = env("SDLC_REVIEW_GATE", "environment")
+    if gate not in GATES:
+        fail(f"review-gate must be environment or stop, not {gate}")
+    stop = gate == "stop"
     # An issue labelled for the pipeline starts a run: its title is the idea, a
     # `feature: <name>` line in its body revises that feature, and a
     # `start: <stage>` line with it runs that feature from the stage instead
-    # (`start: build` verifies it and opens the pull request again).
+    # (`start: build` verifies it and opens the pull request again, and
+    # `start: auto` carries on from where the feature is).
     body = env("SDLC_ISSUE_BODY")
     if idea and not feature and body:
         named, from_stage = from_issue(body)
@@ -490,9 +578,16 @@ def resolve(args):
     branch, folder = branch_for(feature), folder_of(feature)
     use_feature_branch(branch)
     have = {s: (folder / f"{s}.md").exists() for s in STAGES}
-    if start == "auto":
-        start = "intent" if idea else next((s for s in STAGES if not have[s]), "build")
-    if start != "intent" and not have["intent"]:
+    if start == "auto" and idea:
+        start = "intent"
+    elif start == "auto" and stop:
+        # With review-gate stop, starting a run approves the last document, so the
+        # run writes the next one that is missing or out of date, or else freezes
+        # the documents for the build, or else is the build run.
+        start = first_stale(folder) or ("build" if frozen(feature, folder) else "freeze")
+    elif start == "auto":
+        start = next((s for s in STAGES if not have[s]), "build")
+    if not have["intent"] and not idea:
         fail(f"{folder}/intent.md doesn't exist on {branch} or the base. Start with an idea.")
     if start == "plan" and not have["spec"]:
         fail(f"{folder}/spec.md doesn't exist yet. Start at spec.")
@@ -500,12 +595,15 @@ def resolve(args):
         fail(f"{folder}/plan.md doesn't exist yet. Start at plan.")
     if start == "intent" and have["intent"]:
         later = [f"{s}.md" for s in ("spec", "plan") if have[s]]
-        print(f"::warning::{feature} already has an intent.md. This run revises it"
-              + (f" and then regenerates {', '.join(later)}." if later else "."))
+        then = (f" and then regenerates {', '.join(later)}." if not stop else
+                f"; the runs after it write {', '.join(later)} again, one per run.")
+        print(f"::warning::{feature} already has an intent.md. This run revises it" + (then if later else "."))
     print(f"Feature {feature} on {branch}, starting at {start}.")
     step_summary(f"**Feature** `{feature}` · **branch** [`{branch}`]({repo_url('tree', branch)}) · "
-                 f"**starts at** {start}")
-    resolved(feature, start, "build" if start == "build" else "design", ORDER[ORDER.index(start):])
+                 f"**starts at** {start}" + (" (review gate `stop`: one document per run)" if stop else ""))
+    mode = "build" if start == "build" else "design"
+    runs = (start,) if stop and start in STAGES else ORDER[ORDER.index(start):] if start in ORDER else ()
+    resolved(feature, start, mode, runs, freeze=mode == "design" and (start == "freeze" or not stop))
 
 
 # ---------------------------------------------------------------- toolchain
@@ -531,6 +629,100 @@ def package_json(root):
     return package if isinstance(package, dict) else {}
 
 
+def jsonc(text):
+    """JSON with // and /* */ comments and trailing commas, as tsconfig.json allows."""
+    out, i, quoted = [], 0, False
+    while i < len(text):
+        c = text[i]
+        if quoted and c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quoted:
+            quoted = c != '"'
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            end = text.find("\n" if text[i + 1] == "/" else "*/", i + 2)
+            i = len(text) if end < 0 else end + (0 if text[i + 1] == "/" else 2)
+            continue
+        else:
+            quoted = c == '"'
+        out.append(c)
+        i += 1
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+
+
+def typecheck_hint(root):
+    """How the root tsconfig.json type-checks the repository: `npx tsc --noEmit`
+    for one that includes files, `npx tsc --build` for one that references other
+    projects, and nothing for one that checks no files itself."""
+    try:
+        config = jsonc((Path(root) / "tsconfig.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    config = config if isinstance(config, dict) else {}
+    if config.get("references"):
+        return "`npx tsc --build` type-checks the projects the root `tsconfig.json` references"
+    if config.get("files") == [] and not config.get("include"):
+        return ""
+    return "`npx tsc --noEmit` type-checks it"
+
+
+def dependencies(package):
+    return {name for key in ("dependencies", "devDependencies") if isinstance(package.get(key), dict)
+            for name in package[key]}
+
+
+def workspace_globs(root, package):
+    """A workspace's package globs: `packages` in pnpm-workspace.yaml, else
+    `workspaces` in package.json (npm and yarn)."""
+    path = Path(root) / "pnpm-workspace.yaml"
+    if path.is_file():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        flow = re.search(r"^packages:[ \t]*\[(.*?)\]", text, flags=re.MULTILINE | re.DOTALL)
+        block = re.search(r"^packages:[ \t]*(?:#.*)?\n((?:[ \t]+.*\n?|[ \t]*\n)*)", text, flags=re.MULTILINE)
+        items = (flow.group(1).split(",") if flow else
+                 re.findall(r"^[ \t]+-[ \t]*(.*)$", block.group(1), flags=re.MULTILINE) if block else [])
+        items = [re.sub(r"\s+#.*$", "", item).strip().strip("'\"") for item in items]
+        return [item for item in items if item]
+    found = package.get("workspaces")
+    found = found.get("packages") if isinstance(found, dict) else found
+    return [w for w in found if isinstance(w, str)] if isinstance(found, list) else []
+
+
+def workspace_packages(root, globs):
+    """The packages the globs name, as {path, name, runner, scripts}: every
+    directory with a package.json that no `!` glob excludes."""
+    root, found = Path(root), {}
+    skip = [g[1:].strip("/") for g in globs if g.startswith("!")]
+    for pattern in (g.strip("/") for g in globs if not g.startswith("!")):
+        if not pattern or pattern == "." or ".." in pattern.split("/"):
+            continue
+        for path in root.glob(pattern):
+            rel = path.relative_to(root).as_posix()
+            if ((path / "package.json").is_file() and "node_modules" not in path.parts
+                    and not matches_any(rel, skip) and not matches_any(rel + "/", skip)):
+                found[rel] = package_json(path)
+    packages = []
+    for rel, package in sorted(found.items()):
+        scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+        packages.append({
+            "path": rel, "name": package["name"] if isinstance(package.get("name"), str) else f"./{rel}",
+            "runner": next((command.removeprefix("npx ") for name, command in NODE_RUNNERS
+                            if name in dependencies(package)), ""),
+            "scripts": [s for s in ("test", "typecheck") if s in scripts]})
+    return packages
+
+
+def in_package(manager, package, command="", script=""):
+    """A runner `command`, or a package.json `script`, run in one workspace package
+    from the repository root."""
+    if manager == "pnpm":
+        return f"pnpm --filter {package} " + (f"run {script}" if script else f"exec {command}")
+    if manager == "yarn":
+        return f"yarn workspace {package} run {script or command}"
+    return f"npm run {script} --workspace {package}" if script else f"npm exec --workspace {package} -- {command}"
+
+
 def node_install(manager, lockfile, package):
     if manager == "pnpm":
         pinned = re.fullmatch(r"pnpm@([0-9][0-9A-Za-z.-]*)(\+\S*)?", str(package.get("packageManager", "")))
@@ -552,7 +744,7 @@ def detect_toolchain(root="."):
 
     node = has("package.json")
     python = any(map(has, ("pyproject.toml", "requirements.txt", "setup.py"))) or not node
-    install, manager, lockfile, runner = [], "", "", ""
+    install, manager, lockfile, runner, packages = [], "", "", "", []
     if python:
         if has("pyproject.toml"):
             install.append("uv pip install -e .")
@@ -564,12 +756,14 @@ def detect_toolchain(root="."):
         package = package_json(root)
         lockfile, manager = next((lock for lock in NODE_LOCKFILES if has(lock[0])), ("", "npm"))
         install.append(node_install(manager, lockfile, package))
-        used = {name for key in ("dependencies", "devDependencies") if isinstance(package.get(key), dict)
-                for name in package[key]}
-        runner = next((command for name, command in NODE_RUNNERS if name in used), "")
+        runner = next((command for name, command in NODE_RUNNERS if name in dependencies(package)), "")
+        # A workspace's packages each bring their own dependencies and test runner.
+        packages = workspace_packages(root, workspace_globs(root, package))
     return {"python": python, "node": node, "manager": manager, "lockfile": lockfile,
             "node_version_file": next((f for f in (".nvmrc", ".node-version") if has(f)), ""),
-            "typescript": node and has("tsconfig.json"), "runner": runner, "install": " && ".join(install)}
+            "typescript": node and has("tsconfig.json"), "runner": runner, "install": " && ".join(install),
+            "workspace": ("pnpm-workspace.yaml" if has("pnpm-workspace.yaml") else "package.json") if packages else "",
+            "packages": packages}
 
 
 def verification_notes(test_command, install_command=""):
@@ -582,17 +776,44 @@ def verification_notes(test_command, install_command=""):
     if tc["node"]:
         version = f"the version in `{tc['node_version_file']}`" if tc["node_version_file"] else "the latest LTS"
         setup.append(f"Node.js ({version}) with {tc['manager']}")
-        examples.append(f"`{tc['runner']}`" if tc["runner"] else "the repository's own test runner through `npx`")
+        examples.append(f"`{tc['runner']}`" if tc["runner"] else "its package's command below" if tc["packages"]
+                        else "the repository's own test runner through `npx`")
     install = install_command or tc["install"]
     text = (f"The verify job sets up {' and '.join(setup)}, then installs the project with `{install}`."
             if install else f"The verify job sets up {' and '.join(setup)}; there is nothing to install yet.")
     text += (" It runs each phase's Verify block from the repository root, then the whole suite with "
              f"`{test_command}`, which fails if it collects no tests. Run one phase's tests with "
              + " or ".join(examples) + ".")
-    if tc["lockfile"]:
+    if tc["lockfile"] and tc["packages"]:
+        text += (f" A dependency goes in the `package.json` of the package that uses it, and `{tc['lockfile']}` "
+                 "changes with it, so a phase that adds one targets both.")
+    elif tc["lockfile"]:
         text += f" `{tc['lockfile']}` changes with `package.json`, so a phase that adds a dependency targets both."
-    if tc["typescript"]:
-        text += " The repository has a `tsconfig.json`; `npx tsc --noEmit` type-checks it."
+    if tc["typescript"] and (hint := typecheck_hint(".")):
+        text += f" The repository has a `tsconfig.json`; {hint}."
+    if tc["packages"]:
+        text += "\n\n" + workspace_notes(tc)
+    return text
+
+
+def workspace_notes(tc, limit=30):
+    """The commands that test and type-check each package of a workspace."""
+    lines, others = [], []
+    for p in tc["packages"]:
+        how = [f"tests `{in_package(tc['manager'], p['name'], command=p['runner'])}`" if p["runner"] else
+               f"tests `{in_package(tc['manager'], p['name'], script='test')}`" if "test" in p["scripts"] else ""]
+        if "typecheck" in p["scripts"]:
+            how.append(f"type-check `{in_package(tc['manager'], p['name'], script='typecheck')}`")
+        if any(how) and len(lines) < limit:
+            lines.append(f"- `{p['path']}` (`{p['name']}`): " + "; ".join(h for h in how if h))
+        else:
+            others.append(p["path"])
+    text = (f"It is a {tc['manager']} workspace (`{tc['workspace']}`). Each package has its own dependencies, "
+            "test runner and configuration, so a Verify block runs a package's tests from the repository root "
+            "with the package's command below, giving the test file's path relative to the package, never with "
+            "a bare `npx` at the root:\n" + "\n".join(lines))
+    if others:
+        text += f"\n- Other packages: {code_list(others)}"
     return text
 
 
@@ -605,7 +826,8 @@ def toolchain(args):
                   "node-version": "" if tc["node_version_file"] else "lts/*",
                   "node-cache": "npm" if tc["manager"] == "npm" and tc["lockfile"] else ""})
     stacks = [name for name, on in (("Python", tc["python"]), (f"Node.js with {tc['manager']}", tc["node"])) if on]
-    print(f"Toolchain: {' and '.join(stacks)}. Install: {tc['install'] or 'nothing yet'}.")
+    workspace = f", a workspace of {len(tc['packages'])} packages" if tc["packages"] else ""
+    print(f"Toolchain: {' and '.join(stacks)}{workspace}. Install: {tc['install'] or 'nothing yet'}.")
 
 
 # ---------------------------------------------------------------- stage
@@ -630,15 +852,18 @@ def prompt_parts(stage, folder, files, budget, idea):
             sources.append(f"{name}.md")
     named = mentioned_files("\n".join(parts[1:]), files)
     if stage == "plan":
+        allowed = allowed_paths()
         parts.append(f"## Feature\nFolder: `{folder.as_posix()}`. Branch: `{branch_for(folder.name)}`. "
                      f"Approved tag: `{approved_tag(folder.name)}`, created when this plan is approved; it marks the "
-                     "approved documents and the code before the build.")
+                     "approved documents and the code before the build."
+                     + (f" Any phase may also change files matching {code_list(allowed)} (the repository's allowed "
+                        "paths) without listing them as targets." if allowed else ""))
         if env("TEST_COMMAND"):
             parts.append("## How verification runs\n"
                          + verification_notes(env("TEST_COMMAND"), env("INSTALL_COMMAND")))
     parts.append("## Repository files\n" + repo_tree(files))
-    if Path("README.md").exists():
-        parts.append("## README.md (start)\n" + read("README.md")[:4000])
+    for doc in project_docs(files):
+        parts.append(f"## {doc} (start)\n" + read(doc)[:4000])
     used = sum(map(len, parts))
     for path in named:
         if path.startswith(str(folder)) or budget - used < 1000:
@@ -646,6 +871,21 @@ def prompt_parts(stage, folder, files, budget, idea):
         parts.append(file_block(path, budget - used))
         used += len(parts[-1])
     return parts, sources
+
+
+def approval(name, feature):
+    """How a person approves the document a stage wrote, by review gate."""
+    if env("SDLC_REVIEW_GATE", "environment") != "stop":
+        return ("Read it, edit it on the branch if it needs changing, then approve the next "
+                "**Review** job (Review deployments). Rejecting stops the run. Where the review "
+                "environment has no required reviewers, the run carries on by itself.")
+    then = {"intent": "writes spec.md", "spec": "writes plan.md",
+            "plan": "freezes the design and hands it to the builder"}[name]
+    again = "run it with this feature and a new idea" if name == "intent" else f"use start `{name}` instead"
+    return (f"The run stops here (review gate `stop`). Read it, and edit it on the branch if it needs changing. "
+            f"To approve it, run **SDLC Pipeline** with feature `{feature}` and start `auto`, or open an `sdlc` "
+            f"issue with `feature: {feature}` and `start: auto` in its body: that run {then}. To have Ollama "
+            f"write it again, {again}.")
 
 
 def stage(args):
@@ -668,7 +908,7 @@ def stage(args):
                      + "\n\n## Your previous plan\n" + text + "\n\nWrite the whole plan again, fixed.")
             text = unfence(chat(model, prompt + retry))
             problems = plan_problems(text, intent)
-        text = with_hand_back(text, folder)
+        text = with_hand_back(text, folder, allowed_paths())
 
     path = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)
@@ -683,10 +923,7 @@ def stage(args):
 
     summary = [f"## {name}.md is ready for review", "",
                f"[View]({repo_url('blob', branch, str(path))}) · [Edit on the branch]"
-               f"({repo_url('edit', branch, str(path))}) · model `{model}`", "",
-               "Read it, edit it on the branch if it needs changing, then approve the next "
-               "**Review** job (Review deployments). Rejecting stops the run. Where the review "
-               "environment has no required reviewers, the run carries on by itself.", ""]
+               f"({repo_url('edit', branch, str(path))}) · model `{model}`", "", approval(name, feature), ""]
     if problems:
         summary += ["> [!WARNING]", "> The plan still has problems. Fix them on the branch before approving:"]
         summary += [f"> - {p}" for p in problems] + [""]
@@ -714,13 +951,16 @@ def changed_files(phase, base, folder):
     return sorted({p for p in changed if p and not p.startswith(f"{folder}/")}), against
 
 
-def scope(changed, phases):
-    """(outside, frozen): the changed files that no phase in `phases` targets,
-    split into the ones those phases freeze and the rest."""
+def scope(changed, phases, allowed=()):
+    """(outside, frozen, allowed): the changed files that no phase in `phases`
+    targets, split into the ones those phases freeze, the ones the allowed paths
+    let any phase change, and the rest. A frozen file stays frozen even when it
+    is under an allowed path."""
     targets = [t for p in phases for t in p["targets"]]
     loose = [p for p in changed if not matches_any(p, targets)]
     frozen = [p for p in loose if matches_any(p, [f for ph in phases for f in ph["frozen"]])]
-    return [p for p in loose if p not in frozen], frozen
+    free = [p for p in loose if p not in frozen and matches_any(p, allowed)]
+    return [p for p in loose if p not in frozen and p not in free], frozen, free
 
 
 def run_check(command, timeout=900):
@@ -748,7 +988,7 @@ def verify(args):
     # blocks of every phase up to it; the whole feature uses every phase.
     upto = phases[: ids.index(args.phase) + 1] if args.phase else phases
     changed, against = changed_files(args.phase, args.base, folder)
-    outside, frozen = scope(changed, upto[-1:] if args.phase else phases)
+    outside, frozen, free = scope(changed, upto[-1:] if args.phase else phases, path_list(args.allowed_paths))
     tampered = contract_changes(tag, folder) if tag else []
 
     rows = [("Whole test suite", args.test_command, *run_check(args.test_command))] if args.test_command else []
@@ -770,7 +1010,8 @@ def verify(args):
         report.append(f"> [!WARNING]\n> No code changed ({against}). Nothing has been built yet.\n")
     report += [f"**Scope** ({against}): {len(changed)} file(s) changed. "
                + (f"**{len(outside)} outside the plan:** {code_list(outside)}" if outside else
-                  "All inside the plan's targets."),
+                  "All inside the plan's targets" + (" or the allowed paths." if free else ".")),
+               *([f"**Allowed paths:** {len(free)} file(s) outside the targets: {code_list(free)}"] if free else []),
                "**Frozen files:** " + (f"**modified:** {code_list(frozen)}" if frozen else "none touched."),
                f"**Contract:** {contract}", "", "| Check | Result |", "| :-- | :-- |"]
     report += [f"| {name} | {'✅ passed' if code == 0 else f'❌ exit {code}'} |" for name, _, code, _ in rows]
@@ -788,6 +1029,7 @@ def verify(args):
 def handoff(feature, branch, tag, sha, phases, builder):
     """The step summary that pauses the pipeline for the builder."""
     test_command = env("TEST_COMMAND", "python -m pytest -q")
+    allowed = f' --allowed-paths "{",".join(allowed_paths())}"' if allowed_paths() else ""
     who = "Claude Code" if builder == "claude" else "a person"
     log = (folder_of(feature) / "build-log.md").as_posix()
     lines = [f"## ⏸ Step 4: waiting for the build (builder: {who})", "",
@@ -799,7 +1041,8 @@ def handoff(feature, branch, tag, sha, phases, builder):
     lines += ["", "**Build it**, one phase at a time, changing only that phase's targets:", "", "```bash",
               f"git fetch origin && git switch -c phase/{feature}/<n> origin/{branch}",
               f"curl -sSfLo /tmp/sdlc_stage.py {LOCAL_CHECK}",
-              f'python /tmp/sdlc_stage.py verify --feature {feature} --phase <n> --test-command "{test_command}"',
+              f'python /tmp/sdlc_stage.py verify --feature {feature} --phase <n> --test-command "{test_command}"'
+              + allowed,
               "```", "",
               f"Add a `## Phase <n>: <title>` section to `{log}` for each phase. Then open a pull request "
               f"into `{branch}`, where the phase check runs, and merge it; or push straight to `{branch}`.", ""]
@@ -812,7 +1055,9 @@ def handoff(feature, branch, tag, sha, phases, builder):
     else:
         lines.append(f"**Hand back.** When every phase is in `{branch}`, run **SDLC Pipeline** with feature "
                      f"`{feature}` (start `auto` or `build`). That run verifies the build, has Ollama review it, "
-                     "and opens the pull request.")
+                     "and opens the pull request. Where this repository's SDLC Pipeline workflow also runs on "
+                     "merged pull requests into `feature/**`, as the sdlc-github template's does, merging the last "
+                     "phase's pull request starts that run by itself.")
     return "\n".join(lines)
 
 
@@ -975,6 +1220,8 @@ def main():
                    help="check one phase: uncommitted changes, or with --base its phase branch")
     v.add_argument("--base", default=env("BASE_REF"), help="branch the feature (or, with --phase, the phase) goes into")
     v.add_argument("--test-command", default=env("TEST_COMMAND"))
+    v.add_argument("--allowed-paths", default=env("SDLC_ALLOWED_PATHS"),
+                   help="comma-separated globs any phase may change without targeting them")
     for name, option, variable, text in (("verify", "--report", "REPORT", "also write the report to this file"),
                                          ("review", "--report", "REPORT", "also write the review to this file"),
                                          ("pr", "--report", "REPORT", "the verification report"),

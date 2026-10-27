@@ -2,9 +2,9 @@ name: SDLC Phase Check (reusable)
 
 # Runs on a pull request from phase/<feature>/<n> into feature/<feature>: the
 # builder's one phase, checked against the approved plan before it is merged.
-# It fails on a file outside phase <n>'s targets, a frozen file changed, an
-# approved document changed, a failing Verify block for phases 1..n, or a
-# failing (or empty) test suite.
+# It fails on a file outside phase <n>'s targets and the allowed paths, a frozen
+# file changed, an approved document changed, a failing Verify block for phases
+# 1..n, or a failing (or empty) test suite.
 #
 # Called from a repository's own workflow:
 #   on:
@@ -32,6 +32,9 @@ on:
       features-dir:
         type: string
         default: sdlc/features
+      allowed-paths:
+        description: Comma- or newline-separated globs any phase may change without listing them as targets. The same as sdlc.yml's.
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -78,6 +81,7 @@ jobs:
           features-dir: ${{ inputs.features-dir }}
           base: ${{ github.base_ref }}
           test-command: ${{ inputs.test-command }}
+          allowed-paths: ${{ inputs.allowed-paths }}
           report: ${{ runner.temp }}/phase-report.md
       - if: always()
         uses: actions/upload-artifact@v4

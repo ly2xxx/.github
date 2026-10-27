@@ -22,7 +22,17 @@ Everything lands on one branch, `feature/<feature>`, in `sdlc/features/<feature>
 The ✋ jobs wait on the `sdlc-review` environment, so the run pauses at each one
 until you approve. Waiting there uses no runner minutes. Step 4 doesn't use a
 gate: it is a job that polls the feature branch for up to `build-wait-minutes`
-(three hours by default) after you approve the plan.
+(three hours by default) after you approve the plan. With `build-wait-minutes: 0`
+the run ends at the hand-off instead, and a caller that also runs on merged pull
+requests into `feature/**` starts the build run when the last phase merges, so
+nothing holds a runner while the feature is built
+([the sdlc-github template](https://github.com/ly2xxx/sdlc-github/blob/main/plugins/sdlc-github/skills/sdlc-github/templates/sdlc.yml)
+does both).
+
+A private repository can't give an environment required reviewers below GitHub
+Enterprise, so there the ✋ jobs wouldn't pause. Set `review-gate: stop` instead:
+each run writes one document and ends, and you approve it by starting the next
+run (see [Run a feature](#run-a-feature)).
 
 ## Setup (once, in the calling repository)
 
@@ -33,6 +43,9 @@ gate: it is a job that polls the feature branch for up to `build-wait-minutes`
    - Under **Deployment protection rules**, check **Required reviewers** and add yourself as a reviewer. Leave **Prevent self-review** unchecked (so you can approve runs triggered by your own actions), then click **Save protection rules**:
 
      ![Configure Required reviewers protection rules](HITL/sdlc-review_hitl.png)
+
+   Required reviewers on a private repository need GitHub Enterprise. Without
+   them, pass `review-gate: stop` to `sdlc.yml` instead.
 2. **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**, or add an `SDLC_PR_TOKEN` secret:
    - **Option A (Workflow permissions):** In **Settings → Actions → General**, under **Workflow permissions**, check **Allow GitHub Actions to create and approve pull requests** and click **Save**:
 
@@ -69,6 +82,14 @@ runner image provides, set `install-command` and `test-command`; the install run
 after the toolchains are set up. Pin pnpm with `packageManager` in `package.json`:
 a newer pnpm than the one that wrote the lockfile can refuse it.
 
+A workspace (`pnpm-workspace.yaml`, or `workspaces` in `package.json`) gets the
+same setup, and the plan stage also lists its packages with the commands that
+run one package's tests and type-check, such as
+`pnpm --filter <package> exec vitest run <test file>`, because a test runner
+installed in a package isn't on the path at the root. A root `tsconfig.json`
+that only references other projects is described as `npx tsc --build`, and one
+that checks no files isn't offered as a check at all.
+
 ## Run a feature
 
 1. **Start.** Run **SDLC Pipeline** with an idea and a builder, or open an issue
@@ -78,6 +99,14 @@ a newer pnpm than the one that wrote the lockfile can refuse it.
    it there if it needs changing, then **Review deployments → Approve**. The next
    stage reads the branch after you approve, so it sees your edits. **Reject**
    stops the run.
+
+   With `review-gate: stop` there are no ✋ jobs: the run ends after each
+   document, with the same links. To approve it, run **SDLC Pipeline** with the
+   feature and start `auto`, or open an `sdlc` issue with `feature: <name>` and
+   `start: auto` in its body. That run writes the next document, or, after the
+   plan, freezes the design and hands it off. It picks the first document that is
+   missing or older than the one it is written from, so a revised intent brings
+   a new spec and then a new plan, one per run.
 3. **Build, while step 4 waits.** Step 4 freezes the approved documents as the
    `sdlc/<feature>/approved` tag, lists the phases in its summary, and waits.
    - *A coding agent* such as Claude Code works from the same hand-off as a
@@ -94,15 +123,17 @@ a newer pnpm than the one that wrote the lockfile can refuse it.
    verification report and the review, then opens the pull request into the
    base branch (the repository's default branch unless `base` says otherwise).
    If step 4 stopped waiting first, run it again with the feature and start
-   `build`.
+   `build`. With `build-wait-minutes: 0` and the merged-pull-request trigger,
+   merging the last phase's pull request starts that run instead.
 
 | Run workflow with         | Does                                                                                                                      |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------ |
 | idea                      | a new feature, numbered after the highest existing one                                                                    |
 | idea + feature            | revises that feature's intent, then spec and plan again, and re-freezes                                                   |
-| feature                   | the first missing document, or the build run if all three exist                                                           |
+| feature                   | the first missing document, or the build run if all three exist; with `review-gate: stop`, see step 2 above              |
 | feature + start           | that stage onwards: `spec` or `plan` redoes the design, `build` runs only steps 5-6                                       |
-| an issue labelled `sdlc`  | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
+| an issue labelled `sdlc`  | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: <stage>` (`auto`, `spec`, `plan` or `build`) runs it as above |
+| a merged phase pull request | the build run, once `build-log.md` logs every phase, when the caller runs on merged pull requests into `feature/**`    |
 
 ## What the checks hold the builder to
 
@@ -111,7 +142,9 @@ a newer pnpm than the one that wrote the lockfile can refuse it.
   changed on the branch. A plan that can't be built gets regenerated by the plan
   stage, never edited by the builder.
 - **Scope.** A changed file outside the phase's `targets`, or any `frozen` file,
-  fails. `build-log.md` is the builder's own and is exempt.
+  fails. `build-log.md` is the builder's own and is exempt, and so is any file
+  matching the caller's `allowed-paths` (pass the same globs to both workflows),
+  such as a repository's agent notes or decision log; a frozen file still fails.
 - **Tests.** Each phase's Verify block and the whole suite (the caller's
   `test-command`, `python -m pytest -q` by default; see [Languages](#languages))
   must exit zero, and a suite that collects no tests fails.

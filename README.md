@@ -53,7 +53,18 @@ jobs:
 
 A Node.js or TypeScript repository also passes `test-command` (for example
 `npm test`) to both workflows; [Languages](.github/workflows/README.md#languages)
-says what each kind of repository gets.
+says what each kind of repository gets. Three more inputs are worth a look:
+
+- `review-gate: stop` for a private repository, where the review environment
+  can't have required reviewers below GitHub Enterprise: each run writes one
+  document and ends, and starting the next run approves it.
+- `build-wait-minutes: 0`, with `pull_request` `closed` on `feature/**` as a
+  trigger, so merging the last phase starts the build run and no job waits.
+- `allowed-paths`, to both workflows: files any phase may change without the
+  plan targeting them, such as an agent's notes.
+
+The [sdlc-github template](https://github.com/ly2xxx/sdlc-github/blob/main/plugins/sdlc-github/skills/sdlc-github/templates/sdlc.yml)
+sets these up.
 
 [`ly2xxx/interview-playground`](https://github.com/ly2xxx/interview-playground) is a
 complete caller, with an issue trigger and every input.
@@ -67,7 +78,21 @@ Settings a caller leaves empty, such as the Ollama model, fall back to
 
 `@main` tracks the latest. The `v1` tag is a fixed snapshot whose workflows call
 the actions at `@v1` too, so a run uses one version throughout. A paused run on
-`@main` picks up whatever `main` holds when its later jobs start.
+`@main` picks up whatever `main` holds when its later jobs start. `v1` predates
+Node.js support, workspaces, `review-gate` and `allowed-paths`, so those need
+`@main` until `v2` is cut.
+
+To cut a version, tag a commit that pins the workflows' own actions and the local
+check to it, without putting that commit on `main`:
+
+```bash
+git fetch origin && git switch --detach origin/main
+sed -i 's#\(ly2xxx/\.github/[^ ]*\)@main#\1@v2#g; s#ly2xxx/\.github/main/#ly2xxx/.github/v2/#g' \
+  .github/workflows/sdlc.yml .github/workflows/sdlc-phase.yml actions/sdlc-stage/sdlc_stage.py
+git commit -qam "Pin the SDLC pipeline to v2" && git tag v2 && git push origin v2
+```
+
+Move a tag for compatible changes; cut the next one for breaking changes.
 
 ## Develop
 

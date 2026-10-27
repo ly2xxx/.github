@@ -6,14 +6,14 @@ workflows call it once per job with a `command`; its inputs are in [`action.yml`
 
 | Command | Job | Does |
 | :-- | :-- | :-- |
-| `resolve` | Resolve the feature | Picks the feature folder, its `feature/<feature>` branch, the first stage and the run's mode, from an idea, a feature, an issue body or a merged phase branch. |
+| `resolve` | Resolve the feature | Picks the feature folder, its `feature/<feature>` branch, the first stage and the run's mode, from an idea, a feature, an issue body or a merged phase branch. With `review-gate: stop` it runs one document per run, or freezes them once all three are written, in order and not yet frozen. |
 | `stage` | 1 · 2 · 3 | Asks Ollama for `intent.md`, `spec.md` or `plan.md` and pushes it to the feature branch. A plan that fails its checks is asked for once more. |
 | `freeze` | 4 | Tags the approved documents `sdlc/<feature>/approved` and writes the hand-off for the builder. |
 | `wait` | 4 | Polls the feature branch until `build-log.md` logs every phase. |
 | `verify` | 5 · Phase check | Checks the build against the approved plan (below). |
 | `review` | 5 | Ollama compares the diff with the approved spec and plan. Advisory. |
 | `pr` | 6 | Opens or updates the pull request, as a draft if verification failed. |
-| `toolchain` | 5 · Phase check | Reads what the repository is built with (Python; Node.js and its package manager) for [`project-env`](../project-env/action.yml), which sets it up. The plan stage describes the same setup to the model. |
+| `toolchain` | 5 · Phase check | Reads what the repository is built with (Python; Node.js, its package manager and its workspace packages) for [`project-env`](../project-env/action.yml), which sets it up. The plan stage describes the same setup to the model, with each workspace package's test and type-check commands. |
 
 ## What a plan looks like to the checks
 
@@ -41,7 +41,8 @@ python -m pytest tests/test_greet.py -q
 `verify` reads the plan from the approved tag, never from the branch, and fails when:
 
 - **Scope:** a changed file matches none of the targets. `*` and `?` stop at `/`; `**`
-  crosses it. Files in the feature's own folder (`build-log.md`) don't count.
+  crosses it. Files in the feature's own folder (`build-log.md`) don't count, and
+  neither do files matching `allowed-paths` (`--allowed-paths`), unless they are frozen.
 - **Frozen:** a changed file outside the targets matches a `frozen` glob.
 - **Contract:** `intent.md`, `spec.md` or `plan.md` differs from the approved tag.
 - **Commands:** a Verify block, run with `bash -e -o pipefail`, or the whole test suite
@@ -63,7 +64,10 @@ a private repository, and it holds a runner (and Actions minutes) while it waits
 
 If it stops waiting, the run ends there. Once the build is done, run the pipeline
 again with the feature and start `build` to do steps 5 and 6. With
-`build-wait-minutes: 0`, every design run ends at the hand-off.
+`build-wait-minutes: 0`, every design run ends at the hand-off. A caller that also
+runs on `pull_request` `closed` into `feature/**` passes the merged branch to
+`resolve` as `merged-phase`, which starts the build run once `build-log.md` logs
+every phase, so the hand-back needs no waiting job at all.
 
 ## Run it locally
 
@@ -73,6 +77,8 @@ again with the feature and start `build` to do steps 5 and 6. With
 curl -sSfLo /tmp/sdlc_stage.py https://raw.githubusercontent.com/ly2xxx/.github/main/actions/sdlc-stage/sdlc_stage.py
 python /tmp/sdlc_stage.py verify --feature <feature> --phase <n> --test-command "python -m pytest -q"
 ```
+
+Add `--allowed-paths "<globs>"` when the repository's workflows pass `allowed-paths`.
 
 The other commands read the same environment variables the action sets (`SDLC_FEATURE`,
 `BASE_REF`, `OLLAMA_API_KEY` and so on; see the `env:` block in `action.yml`).

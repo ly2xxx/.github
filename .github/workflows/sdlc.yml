@@ -8,9 +8,11 @@ name: SDLC Pipeline (reusable)
 # Ollama Cloud writes the documents. Step 4 tags them sdlc/<feature>/approved and waits,
 # for up to build-wait-minutes, until build-log.md on the feature branch logs every phase;
 # the same run then verifies the build, has Ollama review it and opens the pull request.
-# ✋ jobs wait on the review environment when it has required reviewers. If step 4 stops
-# waiting, run again with the feature and start `build` for steps 5 and 6. How to call
-# and run it: README.md in this folder.
+# ✋ jobs wait on the review environment when it has required reviewers; with review-gate
+# `stop` (private repositories, whose environments can't have reviewers below GitHub
+# Enterprise) the run ends after each document instead, and the next run approves it. If
+# step 4 stops waiting, run again with the feature and start `build` for steps 5 and 6. How
+# to call and run it: README.md in this folder.
 
 on:
   workflow_call:
@@ -52,6 +54,13 @@ on:
         description: Environment the ✋ jobs wait on.
         type: string
         default: sdlc-review
+      review-gate:
+        description: How a person approves each document. environment - the ✋ jobs wait on review-environment's required reviewers. stop - the run ends after each document, and running again for the feature (start auto) approves it; for private repositories, whose environments can't have required reviewers below GitHub Enterprise.
+        type: string
+        default: environment
+      allowed-paths:
+        description: Comma- or newline-separated globs any phase may change without listing them as targets, such as a repository's agent notes or decision log. Frozen files stay frozen.
+        type: string
       features-dir:
         type: string
         default: sdlc/features
@@ -92,6 +101,7 @@ jobs:
       branch: ${{ steps.r.outputs.branch }}
       base: ${{ steps.r.outputs.base }}
       design: ${{ steps.r.outputs.design }}
+      freeze: ${{ steps.r.outputs.freeze }}
       intent: ${{ steps.r.outputs.intent }}
       spec: ${{ steps.r.outputs.spec }}
       plan: ${{ steps.r.outputs.plan }}
@@ -107,6 +117,7 @@ jobs:
           idea: ${{ inputs.idea }}
           feature: ${{ inputs.feature }}
           start: ${{ inputs.start }}
+          review-gate: ${{ inputs.review-gate }}
           merged-phase: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged && github.head_ref || '' }}
           issue-body: ${{ github.event_name == 'issues' && github.event.issue.body || '' }}
           base: ${{ inputs.base || github.event.repository.default_branch }}
@@ -135,12 +146,13 @@ jobs:
           base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
+          review-gate: ${{ inputs.review-gate }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
 
   review-intent:
     name: "✋ Review intent.md"
     needs: [resolve, intent]
-    if: needs.intent.result == 'success'
+    if: needs.intent.result == 'success' && inputs.review-gate != 'stop'
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -167,12 +179,13 @@ jobs:
           base: ${{ needs.resolve.outputs.base }}
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
+          review-gate: ${{ inputs.review-gate }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
 
   review-spec:
     name: "✋ Review spec.md"
     needs: [resolve, spec]
-    if: ${{ !cancelled() && needs.spec.result == 'success' }}
+    if: ${{ !cancelled() && needs.spec.result == 'success' && inputs.review-gate != 'stop' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -201,12 +214,14 @@ jobs:
           think: ${{ inputs.think }}
           test-command: ${{ inputs.test-command }}
           install-command: ${{ inputs.install-command }}
+          allowed-paths: ${{ inputs.allowed-paths }}
+          review-gate: ${{ inputs.review-gate }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
 
   review-plan:
     name: "✋ Review plan.md"
     needs: [resolve, plan]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && inputs.review-gate != 'stop' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.review-environment }}
     steps:
@@ -216,7 +231,9 @@ jobs:
   handoff:
     name: "4 · ⏸ Hand off and wait for the build"
     needs: [resolve, review-plan]
-    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.mode == 'design' }}
+    # A design run freezes after the plan's review; with review-gate stop, only the run
+    # started after the plan was written does.
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.freeze == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -234,6 +251,7 @@ jobs:
           features-dir: ${{ inputs.features-dir }}
           builder: ${{ inputs.builder }}
           test-command: ${{ inputs.test-command }}
+          allowed-paths: ${{ inputs.allowed-paths }}
           build-wait-minutes: ${{ inputs.build-wait-minutes }}
       - id: wait
         uses: ly2xxx/.github/actions/sdlc-stage@main
@@ -271,6 +289,7 @@ jobs:
           features-dir: ${{ inputs.features-dir }}
           base: ${{ needs.resolve.outputs.base }}
           test-command: ${{ inputs.test-command }}
+          allowed-paths: ${{ inputs.allowed-paths }}
           report: ${{ runner.temp }}/verify-report.md
       - if: always()
         uses: actions/upload-artifact@v4

@@ -30,6 +30,11 @@ inputs:
   start:
     description: For resolve - auto, intent, spec, plan or build.
     default: auto
+  review-gate:
+    description: For resolve and stage - how a person approves each document. environment waits on the review environment; stop ends the run after each document, and starting the next run approves it.
+    default: environment
+  allowed-paths:
+    description: For stage plan, freeze and verify - comma- or newline-separated globs any phase may change without listing them as targets, such as a repository's agent notes. Frozen files stay frozen.
   base:
     description: The branch the feature (or, for verify with a phase, the phase) goes into. New feature branches start from it.
   features-dir:
@@ -94,6 +99,9 @@ outputs:
   design:
     description: resolve - true when this run writes documents, false when it verifies a build.
     value: ${{ steps.run.outputs.design }}
+  freeze:
+    description: resolve - true when step 4 tags the documents and hands them off in this run.
+    value: ${{ steps.run.outputs.freeze }}
   mode:
     description: resolve - design (write documents, hand off), build (verify, review, pull request) or none.
     value: ${{ steps.run.outputs.mode }}
@@ -115,6 +123,8 @@ runs:
         SDLC_MERGED_PHASE: ${{ inputs.merged-phase }}
         SDLC_ISSUE_BODY: ${{ inputs.issue-body }}
         SDLC_START: ${{ inputs.start }}
+        SDLC_REVIEW_GATE: ${{ inputs.review-gate }}
+        SDLC_ALLOWED_PATHS: ${{ inputs.allowed-paths }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}
         BUILD_WAIT_MINUTES: ${{ inputs.build-wait-minutes }}
