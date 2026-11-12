@@ -139,6 +139,27 @@ def test_a_prompt_adds_named_files_smallest_first_and_cuts_the_longest(repo):
     assert sum(map(len, parts)) < 12100
 
 
+
+def test_intent_keeps_the_files_the_idea_names_for_the_later_stages(repo):
+    folder = Path("sdlc/features", FEATURE)
+    folder.mkdir(parents=True, exist_ok=True)
+    Path("docs").mkdir(exist_ok=True)
+    Path("docs/design.md").write_text("Piece 3: the exact wording\n")
+    files = {"docs/design.md", "app/routes.py"}
+    idea = "Chat updates, piece 3 of docs/design.md: follow it exactly"
+    intent = s.with_idea_files("# Intent\nPost a line per step.\n", idea, files)
+    assert intent.endswith("## Read with this\nThe idea names these files. Follow them where they are "
+                           "more exact than this intent.\n- `docs/design.md`\n")
+    # the spec stage only sees intent.md, and now that names the design document
+    (folder / "intent.md").write_text(intent)
+    parts, _ = s.prompt_parts("spec", folder, files | {(folder / "intent.md").as_posix()}, 60000, "")
+    assert any(p.startswith("### docs/design.md\n") for p in parts)
+    # nothing is added when the intent already names the file, or the idea names none
+    named = "# Intent\nFollow docs/design.md.\n"
+    assert s.with_idea_files(named, idea, files) == named
+    assert s.with_idea_files("# Intent\n", "Add a greeting", files) == "# Intent\n"
+    assert s.with_idea_files("# Intent\n", "", files) == "# Intent\n"
+
 def test_jsonc_reads_tsconfig_comments_and_trailing_commas():
     text = ('{\n  // the schema\n  "$schema": "https://json.schemastore.org/tsconfig", /* a block */\n'
             '  "files": [],\n  "x": "a\\"//b",\n}\n')

@@ -277,6 +277,20 @@ def mentioned_files(text, files):
     return sorted(hits)
 
 
+def with_idea_files(text, idea, files):
+    """intent.md, with a closing list of the files the idea names that the intent
+    leaves out. Only intent.md gets the idea; the spec and plan stages are given
+    the files intent.md (and then spec.md) names, so a design document the idea
+    points at has to be named there or the later stages never see it."""
+    missing = [f for f in mentioned_files(idea or "", files) if f not in text]
+    if not missing:
+        return text
+    lines = "\n".join(f"- `{f}`" for f in missing)
+    return (text.rstrip() + "\n\n## Read with this\n"
+            "The idea names these files. Follow them where they are more exact than this intent.\n"
+            + lines + "\n")
+
+
 def file_block(path, budget):
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     if len(text) > budget:
@@ -828,6 +842,8 @@ def stage(args):
             text = unfence(chat(model, prompt + retry))
             problems = plan_problems(text, intent)
         text = with_hand_back(text, folder)
+    if name == "intent":
+        text = with_idea_files(text, env("SDLC_IDEA"), set(git("ls-files").splitlines()))
 
     path = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)
