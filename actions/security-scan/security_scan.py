@@ -43,6 +43,13 @@ def base_commit(base):
     return git("merge-base", ref, "HEAD")
 
 
+def add_base_worktree(path, commit):
+    # The job's checkout keeps no credentials, so Git LFS can't download here. Leave LFS
+    # files as pointers, as they are in the head checkout: the scan doesn't read them.
+    os.environ["GIT_LFS_SKIP_SMUDGE"] = "1"
+    git("worktree", "add", "-q", "--detach", str(path), commit)
+
+
 def secrets(merge_base, workdir):
     out = Path(workdir, "gitleaks.json")
     if git("rev-list", "--count", f"{merge_base}..HEAD") == "0":
@@ -157,7 +164,7 @@ def main():
         new_secrets = secrets(merge_base, tmp)
         head = findings(trivy(Path.cwd(), Path(tmp, "head.json"), args.severity, ignorefile))
         worktree = Path(tmp, "base")
-        git("worktree", "add", "-q", "--detach", str(worktree), merge_base)
+        add_base_worktree(worktree, merge_base)
         try:
             base = findings(trivy(worktree, Path(tmp, "base.json"), args.severity, ignorefile))
         finally:
