@@ -122,6 +122,23 @@ def test_the_plan_prompt_describes_the_repositorys_toolchain(repo, monkeypatch):
     assert "Node.js (the latest LTS) with npm" in notes and "`npm test`" in notes and "`npx jest <test file>`" in notes
 
 
+def test_a_prompt_adds_named_files_smallest_first_and_cuts_the_longest(repo):
+    folder = Path("sdlc/features", FEATURE)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "intent.md").write_text("# Intent\nFollow docs/design.md. Mount it in app/routes.py.\n")
+    Path("app").mkdir(exist_ok=True)
+    Path("app/routes.py").write_text("# route\n" * 4000)       # sorts first by name, and is long
+    Path("docs").mkdir(exist_ok=True)
+    Path("docs/design.md").write_text("Piece 1\n" + "rule\n" * 300 + "Piece 2: the last line\n")
+    files = {"app/routes.py", "docs/design.md", (folder / "intent.md").as_posix()}
+    parts, _ = s.prompt_parts("spec", folder, files, 12000, "")
+    design = next(p for p in parts if p.startswith("### docs/design.md\n"))
+    routes = next(p for p in parts if p.startswith("### app/routes.py\n"))
+    assert "Piece 2: the last line" in design and "(truncated)" not in design
+    assert "(truncated)" in routes and parts.index(design) < parts.index(routes)
+    assert sum(map(len, parts)) < 12100
+
+
 def test_jsonc_reads_tsconfig_comments_and_trailing_commas():
     text = ('{\n  // the schema\n  "$schema": "https://json.schemastore.org/tsconfig", /* a block */\n'
             '  "files": [],\n  "x": "a\\"//b",\n}\n')
