@@ -797,7 +797,9 @@ def prompt_parts(stage, folder, files, budget, idea):
     if doc := project_doc(files):
         parts.append(f"## {doc} (start)\n" + read(doc)[:4000])
     used = sum(map(len, parts))
-    for path in named:
+    # Smallest first, so one long file can't use up the budget before a short design
+    # document the intent points at; the long file is the one that gets cut.
+    for path in sorted(named, key=lambda f: (Path(f).stat().st_size, f)):
         if path.startswith(str(folder)) or budget - used < 1000:
             continue
         parts.append(file_block(path, budget - used))
