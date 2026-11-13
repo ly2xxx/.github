@@ -6,8 +6,8 @@ workflows call it once per job with a `command`; its inputs are in [`action.yml`
 
 | Command | Job | Does |
 | :-- | :-- | :-- |
-| `resolve` | Resolve the feature | Picks the feature folder, its `feature/<feature>` branch, the first stage and the run's mode, from an idea, a feature, an issue body or a merged phase branch. |
-| `stage` | 1 · 2 · 3 | Asks Ollama for `intent.md`, `spec.md` or `plan.md` and pushes it to the feature branch. A plan that fails its checks is asked for once more. |
+| `resolve` | Resolve the feature | Picks the feature folder, its `feature/<feature>` branch, the first stage and the run's mode, from an idea, a feature, an issue body or a merged phase branch. Checks the issue's `design: docs/x.md#section` lines and passes them on. |
+| `stage` | 1 · 2 · 3 | Asks Ollama for `intent.md`, `spec.md` or `plan.md` and pushes it to the feature branch. Design sections are quoted word for word; the spec and plan prompts get the facts of the code the documents name. A plan that fails its checks is asked for once more. |
 | `freeze` | 4 | Tags the approved documents `sdlc/<feature>/approved` and writes the hand-off for the builder. |
 | `wait` | 4 | Polls the feature branch until `build-log.md` logs every phase. |
 | `verify` | 5 · Phase check | Checks the build against the approved plan (below). |
@@ -47,10 +47,13 @@ python -m pytest tests/test_greet.py -q
 - **Commands:** a Verify block, run with `bash -e -o pipefail`, or the whole test suite
   exits non-zero, or nothing changed at all.
 
-With `--phase <n>` it checks that phase's targets and frozen files and runs the Verify
-blocks of phases 1 to n: against uncommitted work, or with `--base` against the phase
-branch's changes (the Phase check). Without it, it checks every phase against
-everything the branch changed since `--base`.
+With `--phase <n>` it checks that phase's targets and frozen files, runs the
+type-check (`--typecheck-command`; empty finds the root `package.json`'s `typecheck`
+script, else `tsc`; `none` skips it) and that phase's Verify block: against
+uncommitted work, or with `--base` against the phase branch's changes (the Phase
+check). `--full` also runs the whole suite and the Verify blocks of phases 1 to n.
+Without `--phase`, it checks every phase against everything the branch changed
+since `--base` and runs the whole suite and every phase's Verify block.
 
 ## How the run pauses at step 4
 
