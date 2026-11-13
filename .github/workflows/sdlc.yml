@@ -21,6 +21,9 @@ on:
       feature:
         description: Existing feature folder. Empty for a new idea.
         type: string
+      design:
+        description: "Design sections the feature is built from, as docs/x.md#section references, space-separated. An issue body's \"design: docs/x.md#section\" lines are added to them. The intent stage quotes each one word for word, and so do the spec and plan stages."
+        type: string
       start:
         description: auto, intent, spec, plan or build. auto = intent with an idea, else the first missing document, else build.
         type: string
@@ -92,6 +95,7 @@ jobs:
       branch: ${{ steps.r.outputs.branch }}
       base: ${{ steps.r.outputs.base }}
       design: ${{ steps.r.outputs.design }}
+      design-docs: ${{ steps.r.outputs.design-docs }}
       intent: ${{ steps.r.outputs.intent }}
       spec: ${{ steps.r.outputs.spec }}
       plan: ${{ steps.r.outputs.plan }}
@@ -109,6 +113,7 @@ jobs:
           start: ${{ inputs.start }}
           merged-phase: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged && github.head_ref || '' }}
           issue-body: ${{ github.event_name == 'issues' && github.event.issue.body || '' }}
+          design: ${{ inputs.design }}
           base: ${{ inputs.base || github.event.repository.default_branch }}
           features-dir: ${{ inputs.features-dir }}
 
@@ -130,6 +135,7 @@ jobs:
           command: stage
           stage: intent
           idea: ${{ inputs.idea }}
+          design: ${{ needs.resolve.outputs.design-docs }}
           feature: ${{ needs.resolve.outputs.feature }}
           features-dir: ${{ inputs.features-dir }}
           base: ${{ needs.resolve.outputs.base }}

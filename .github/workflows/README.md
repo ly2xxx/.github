@@ -82,6 +82,35 @@ a repository too large to list, every directory with its file count (`.agents/`,
 an agent's own notes, is left out), and the start of its `README.md`, else of
 `AGENTS.md`, `CLAUDE.md` or `replit.md`.
 
+The spec and plan stages also get **Facts from the code**: the exported types,
+interfaces, enums, function signatures and short constants, the routes and the
+JSON responses of every code file the documents name, read from the whole file.
+A module path the way imports write it (`@/lib/auth`) names its file too. The
+prompts tell Ollama to take names, roles, fields and response shapes from these
+facts and never guess one.
+
+### Building from a design document
+
+A feature too big for one line goes in a design document in the repository,
+reviewed and merged like any other change, with a section per piece (and,
+ideally, a "Facts the plan must not guess" section for the shapes the code
+doesn't show). Point a run at the sections it builds with `design:` lines in the
+issue body, or the `design` input:
+
+```text
+Title: Team tasks piece 5: create tasks from Messages
+Body:
+design: docs/team-tasks.md#rules-for-every-piece
+design: docs/team-tasks.md#piece-5
+```
+
+The anchor is the heading's link anchor as GitHub shows it, or the start of it
+(`#piece-5` finds "## Piece 5: create tasks from Messages"). `resolve` fails at
+once if a file or section isn't there, or an anchor starts more than one heading.
+The intent stage quotes each section word for word and names it in a `## Design`
+section of `intent.md`, so the spec and plan stages quote the same sections.
+A revision without `design:` lines keeps the sections the intent already names.
+
 ## Run a feature
 
 1. **Start.** Run **SDLC Pipeline** with an idea and a builder, or open an issue
@@ -115,7 +144,7 @@ an agent's own notes, is left out), and the start of its `README.md`, else of
 | idea + feature            | revises that feature's intent, then spec and plan again, and re-freezes                                                   |
 | feature                   | the first missing document, or the build run if all three exist                                                           |
 | feature + start           | that stage onwards: `spec` or `plan` redoes the design, `build` runs only steps 5-6                                       |
-| an issue labelled `sdlc`  | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6 |
+| an issue labelled `sdlc`  | the title is the idea; `feature: <name>` in the body revises that feature, and with `start: build` runs only steps 5-6; `design: docs/x.md#section` lines build it from those sections |
 
 ## What the checks hold the builder to
 
@@ -127,7 +156,12 @@ an agent's own notes, is left out), and the start of its `README.md`, else of
   fails. `build-log.md` is the builder's own and is exempt.
 - **Tests.** Each phase's Verify block and the whole suite (the caller's
   `test-command`, `python -m pytest -q` by default; see [Languages](#languages))
-  must exit zero, and a suite that collects no tests fails.
+  must exit zero, and a suite that collects no tests fails. The Phase check on a
+  `phase/<feature>/<n>` pull request runs only that phase's Verify block and the
+  type-check (the root `package.json`'s `typecheck` script, else `tsc`; set
+  `typecheck-command`, or `none`), so it takes minutes, not the whole suite's
+  time. The suite and every phase's block run once, at step 5. Set `full-suite:
+  true` on the Phase check to run them on every phase too.
 - **Coverage.** The plan has a row for every "Done when" item in `intent.md`; one
   it can't deliver is marked `NOT COVERED`, for you to see at the plan review.
 - **Security.** Secrets in the branch's commits, and HIGH or CRITICAL vulnerable

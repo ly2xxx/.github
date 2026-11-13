@@ -26,4 +26,9 @@ Anything the intent leaves ambiguous, with the assumption you made. Write "None"
 if there are none.
 
 Rules: design only what the intent asks for. Do not write the implementation.
+"Design" sections below are approved and quoted word for word: where they are
+more exact than the intent, follow them. Take every name, field, role, enum value
+and response shape from "Facts from the code" and the files shown; never assume
+one they don't show. If you need one they don't give, say so under Open
+questions instead of inventing it.
 Answer with the Markdown document only, with no preamble.

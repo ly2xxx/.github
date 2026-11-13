@@ -59,6 +59,12 @@ Rules:
   plan so the builder never needs to execute exploratory shell probes (e.g.
   `python -c "import ..."`, `node -e "require(...)"`, environment inspects, or
   ad-hoc scripts).
+- Approved designs and the code's facts: "Design" sections below are approved
+  and quoted word for word; where they are more exact than the spec, follow them.
+  Take every import path, exported name, field, role or enum value and response
+  shape from "Facts from the code" and the files shown, and write tests and
+  fixtures against those real shapes. Never assume one they don't show: list it
+  under Open questions, and keep the plan buildable without the guess.
 - Every phase has all three markers. `targets` lists every file the phase may
   create, modify, move or delete: for a move, list both the old and the new
   path. Globs are allowed; `*` does not cross `/`, `**` does.
@@ -71,7 +77,9 @@ Rules:
   Run tests the way "How verification runs" below says when it is given, with
   the one-phase command it names (for example `python -m pytest
   tests/test_new.py -v` or `npx vitest run tests/new.test.ts`). Never run the
-  whole suite from inside a test. The builder executes changes via file edits
+  whole suite from inside a test. A phase's pull request runs only that phase's
+  Verify block (and the type-check), so the block must prove the whole phase by
+  itself. The builder executes changes via file edits
   and runs only the prescribed Verify command.
 - Verify blocks run under `bash -e -o pipefail`: first on the builder's
   uncommitted work, then again on the committed result, in the Phase check on

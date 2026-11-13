@@ -86,7 +86,8 @@ def test_resolve_numbers_a_new_idea(repo, monkeypatch, outputs):
     assert run(["resolve"], monkeypatch) == 0
     assert outputs() == {
         "feature": "002-add-a-farewell-too", "branch": "feature/002-add-a-farewell-too", "start": "intent",
-        "base": "main", "mode": "design", "design": "true", "intent": "true", "spec": "true", "plan": "true"}
+        "base": "main", "mode": "design", "design": "true", "design-docs": "", "intent": "true", "spec": "true",
+        "plan": "true"}
 
 
 def test_resolve_from_an_issue(repo, monkeypatch, outputs):

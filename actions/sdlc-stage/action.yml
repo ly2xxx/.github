@@ -14,7 +14,9 @@ inputs:
   idea:
     description: One line. Drafts intent.md for a new feature, or revises the named feature's intent.
   issue-body:
-    description: "For resolve - the body of the issue that started the run. A line like \"feature: 001-name\" revises that feature."
+    description: "For resolve - the body of the issue that started the run. A line like \"feature: 001-name\" revises that feature; a line like \"design: docs/x.md#piece-5\" points the intent stage at a design section."
+  design:
+    description: "For resolve and stage intent - design references (docs/x.md#section), space-separated. The intent stage quotes each section word for word and names it in intent.md, so the spec and plan stages quote it too."
   merged-phase:
     description: For resolve - the head branch (phase/<feature>/<n>) of a merged pull request, used when idea and feature are empty. Starts the build run once build-log.md logs every phase.
   feature:
@@ -49,6 +51,11 @@ inputs:
     default: "60000"
   test-command:
     description: For verify - the whole test suite. The plan stage is also told it, when given.
+  typecheck-command:
+    description: For verify with a phase - the type-check it runs with that phase's Verify block. Empty finds one (the root package.json's typecheck script, else tsc); none skips it.
+  full-suite:
+    description: For verify with a phase - "true" also runs the whole test suite and the Verify blocks of the earlier phases.
+    default: "false"
   install-command:
     description: For stage plan - the caller's install command, when it replaces the default install, so the plan describes how the project is really installed.
   report:
@@ -73,6 +80,9 @@ outputs:
   start:
     description: resolve - the first stage that runs.
     value: ${{ steps.run.outputs.start }}
+  design-docs:
+    description: resolve - the design references from the issue body and the design input, space-separated.
+    value: ${{ steps.run.outputs.design-docs }}
   intent:
     description: resolve - whether the intent stage runs.
     value: ${{ steps.run.outputs.intent }}
@@ -114,6 +124,7 @@ runs:
         SDLC_FEATURE: ${{ inputs.feature }}
         SDLC_MERGED_PHASE: ${{ inputs.merged-phase }}
         SDLC_ISSUE_BODY: ${{ inputs.issue-body }}
+        SDLC_DESIGN: ${{ inputs.design }}
         SDLC_START: ${{ inputs.start }}
         SDLC_PHASE: ${{ inputs.phase }}
         SDLC_BUILDER: ${{ inputs.builder }}
@@ -126,6 +137,8 @@ runs:
         OLLAMA_TIMEOUT: ${{ inputs.timeout-seconds }}
         MAX_CONTEXT_CHARS: ${{ inputs.max-context-chars }}
         TEST_COMMAND: ${{ inputs.test-command }}
+        TYPECHECK_COMMAND: ${{ inputs.typecheck-command }}
+        SDLC_FULL: ${{ inputs.full-suite }}
         INSTALL_COMMAND: ${{ inputs.install-command }}
         REPORT: ${{ inputs.report }}
         REVIEW: ${{ inputs.review }}

@@ -27,7 +27,11 @@ What this deliberately leaves out, so the later stages don't grow it.
 What the idea leaves ambiguous, each with the assumption you made. Write "None"
 if there are none.
 
-Rules: stay within the idea. Don't invent requirements it doesn't imply. If an
+Rules: stay within the idea. Don't invent requirements it doesn't imply. When
+"Design" sections are given below, they are approved: the idea is a pointer to
+them, so the intent states what they ask for and nothing they leave out, and
+every Done-when item comes from them. Don't write a Design section; the
+pipeline adds one naming them, so the later stages read them too. If an
 existing intent.md is given below, revise it: apply the idea as a change, keep
 every part the idea doesn't touch, and say in Open questions what changed.
 Answer with the Markdown document only, with no preamble.

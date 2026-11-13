@@ -291,6 +291,216 @@ def with_idea_files(text, idea, files):
             + lines + "\n")
 
 
+# ---------------------------------------------------------------- design documents
+
+DESIGN_LINE = re.compile(r"^\s*design:\s*(\S+)\s*$", re.MULTILINE)
+DESIGN_REF = re.compile(r"`([^`\s]+\.md(?:#[\w-]+)?)`")
+
+
+def design_refs(body):
+    """The `design: docs/x.md#piece-5` lines of an issue body (or an input), in order."""
+    return list(dict.fromkeys(DESIGN_LINE.findall(body or "")))
+
+
+def slug(heading):
+    """A heading's anchor, as GitHub makes it: lowercase, punctuation dropped, spaces to hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def design_section(text, anchor):
+    """The heading `anchor` names and everything under it, up to the next heading of
+    the same or a higher level. The anchor is the heading's slug, or the start of
+    exactly one heading's slug, so `#piece-5` finds "## Piece 5: create tasks from
+    Messages". None when no heading, or more than one, matches."""
+    lines, fenced, headings = text.splitlines(), False, []
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and (m := re.match(r"(#{1,6})\s+(.+?)\s*#*\s*$", line)):
+            headings.append((i, len(m.group(1)), slug(m.group(2))))
+    found = ([h for h in headings if h[2] == anchor]
+             or [h for h in headings if h[2].startswith(anchor + "-")])
+    if len(found) != 1:
+        return None
+    start, level, _ = found[0]
+    end = next((i for i, lv, _ in headings if i > start and lv <= level), len(lines))
+    return "\n".join(lines[start:end]).rstrip() + "\n"
+
+
+def design_text(ref):
+    """(path, text) of a `path.md#anchor` reference: the section, or the whole file
+    without an anchor. Fails when the file or the section isn't there."""
+    path, _, anchor = ref.partition("#")
+    path = path.strip("./")
+    if not Path(path).is_file():
+        fail(f"The design document {path} (from `design: {ref}`) isn't in the repository.")
+    text = read(path)
+    if anchor:
+        text = design_section(text, anchor.lower()) or fail(
+            f"{path} has no heading for #{anchor}, or more than one starts with it (from `design: {ref}`). "
+            "Use the heading's anchor as GitHub shows it in the heading's link, or the start of it.")
+    return path, text
+
+
+def design_input():
+    """The design references the design input gives, space-separated."""
+    return env("SDLC_DESIGN").split()
+
+
+def design_parts(refs):
+    """The prompt sections that quote the design word for word."""
+    return [f"## Design: {ref} (word for word; it is approved, so follow it exactly)\n" + design_text(ref)[1]
+            for ref in refs]
+
+
+def with_design(text, refs):
+    """intent.md with a closing `## Design` section naming the design references, so
+    the spec and plan stages quote the same sections. Replaces any the model wrote."""
+    text = re.sub(r"^## Design\b.*?(?=^## |\Z)", "", text, flags=re.MULTILINE | re.DOTALL).rstrip()
+    if not refs:
+        return text + "\n"
+    return (text + "\n\n## Design\nWritten from these approved sections, which the spec and plan stages read "
+            "word for word:\n" + "\n".join(f"- `{r}`" for r in refs) + "\n")
+
+
+def refs_in_intent(intent):
+    """The design references an intent.md's `## Design` section names."""
+    return DESIGN_REF.findall(section(intent, "Design") or "")
+
+
+# ---------------------------------------------------------------- facts from the code
+
+CODE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py")
+MODULE_PATH = re.compile(r"(?<![\w.@/-])(?:@/|~/)?(?:[\w-]+/)+[\w.-]+")
+
+
+def package_of(path):
+    """The directory a monorepo package sits in, for telling `@/lib/auth` in one
+    package from another: the first two parts of the path."""
+    return "/".join(path.split("/")[:2])
+
+
+def module_files(text, files, near=(), limit=3):
+    """Code files named by module path without a suffix, as imports and designs write
+    them: `@/lib/auth` or `src/lib/auth` is `.../src/lib/auth.ts`, `.../lib/auth/index.ts`
+    and so on. When the path fits files in more than one package, the ones in the
+    packages of the `near` files win. A path that still matches more than `limit`
+    files names none of them."""
+    code, near = [f for f in files if f.endswith(CODE_SUFFIXES)], {package_of(f) for f in near}
+    hits = set()
+    for token in set(MODULE_PATH.findall(text)):
+        tail = re.sub(r"^(?:@|~)/", "", token).strip("/")
+        if not tail or Path(tail).suffix in CODE_SUFFIXES + (".md",):
+            continue
+        ends = [f"/{tail}{s}" for s in CODE_SUFFIXES] + [f"/{tail}/index{s}" for s in CODE_SUFFIXES]
+        found = [f for f in code if any(("/" + f).endswith(e) for e in ends)]
+        found = [f for f in found if package_of(f) in near] or found
+        if 0 < len(found) <= limit:
+            hits.update(found)
+    return sorted(hits)
+
+
+def _collect(lines, i, stop, limit):
+    """Lines from i until `stop(text so far)` says the declaration is whole, at most `limit`."""
+    out = []
+    for line in lines[i:i + limit]:
+        out.append(line.rstrip())
+        if stop("\n".join(out)):
+            break
+    return out
+
+
+def _strip_strings(text):
+    return re.sub(r"(['\"`]).*?\1", "", text)
+
+
+def _balanced(text):
+    depth, seen = 0, False
+    for c in _strip_strings(text):
+        if c in "({[":
+            depth, seen = depth + 1, True
+        elif c in ")}]":
+            depth -= 1
+    return seen and depth <= 0
+
+
+def _no_comments(lines):
+    """Declaration lines without comment-only lines and trailing // comments."""
+    out = []
+    for line in lines:
+        bare = line.strip()
+        if bare.startswith(("//", "/*", "*", "#")) and not bare.startswith("#!"):
+            continue
+        out.append(re.sub(r"\s+//(?!/).*$", "", line) if "//" in line and "://" not in line else line)
+    return out
+
+
+def _whole(text):
+    """A declaration is whole once its brackets close, or, without brackets, at a `;`."""
+    return _balanced(text) if re.search(r"[({\[]", _strip_strings(text)) else text.rstrip().endswith(";")
+
+
+def code_facts(path, limit=60):
+    """The exported names and shapes in one code file: for TypeScript and JavaScript
+    its exported types, interfaces, enums, functions, classes and constants, the
+    routes it registers and the JSON it responds with; for Python its top-level
+    functions and classes and their methods. At most `limit` lines."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    decls = []
+    if path.endswith(".py"):
+        for i, line in enumerate(lines):
+            if re.match(r"(?:    )?(?:async\s+)?(?:def|class)\s", line):
+                decls.append([l.rstrip(":").rstrip() for l in _collect(lines, i, lambda t: t.rstrip().endswith(":"), 6)])
+    else:
+        for i, line in enumerate(lines):
+            if re.match(r"export\s+(?:declare\s+)?(?:interface|type|enum)\s", line):
+                decls.append(_no_comments(_collect(lines, i, _whole, 80)))
+            elif re.match(r"export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\b", line):
+                sig = _collect(lines, i, lambda t: "{" in t or t.rstrip().endswith(";"), 8)
+                sig[-1] = re.sub(r"\s*\{[^{}]*$", "", sig[-1])
+                decls.append(sig)
+            elif re.match(r"export\s+(?:const|let)\s", line):
+                # A short value (an enum's values, a small map) is a fact; a long one is just its name.
+                value = _no_comments(_collect(lines, i, _whole, 12))
+                short = _whole("\n".join(value)) and len("\n".join(value)) <= 400
+                decls.append(value if short else [re.sub(r"\s*=\s*.*$", "", line.rstrip()) + " = …"])
+            elif re.match(r"export\s*\{", line):
+                decls.append(_collect(lines, i, lambda t: "}" in t, 10))
+            elif re.search(r"\b(?:router|app)\.(?:get|post|put|patch|delete)\(\s*['\"`]", line):
+                decls.append([re.sub(r",\s*(?:async\s*)?\(.*$", "", line.strip()) + " …"])
+            elif re.search(r"\bres(?:\.status\(\d+\))?\.json\(", line):
+                decls.append([l.strip() for l in _collect(lines, i, _balanced, 8)])
+    kept = []
+    for decl in dict.fromkeys("\n".join(d) for d in decls if any(d)):
+        kept += decl.splitlines()
+    return kept[:limit] + ([f"... ({len(kept) - limit} more lines)"] if len(kept) > limit else [])
+
+
+def facts_block(paths, budget):
+    """The `Facts from the code` prompt section for `paths`, within `budget` characters."""
+    blocks, used = [], 0
+    for n, path in enumerate(paths):
+        facts = code_facts(path)
+        if not facts:
+            continue
+        block = f"### {path}\n```\n" + "\n".join(facts) + "\n```\n"
+        if used + len(block) > budget:
+            blocks.append(f"(Facts for {len(paths) - n} more file(s) left out for length.)\n")
+            break
+        blocks.append(block)
+        used += len(block)
+    if not blocks:
+        return ""
+    return ("## Facts from the code\n"
+            "The exported names, types, signatures, routes and JSON responses of the files the documents above name, "
+            "read from the whole of each file (the files shown further down may be cut short). Use these names, "
+            "fields, values and shapes exactly. Never assume one they don't show: if you need it, say so under Open "
+            "questions.\n\n" + "\n".join(blocks))
+
+
 def file_block(path, budget):
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     if len(text) > budget:
@@ -484,11 +694,13 @@ def from_issue(body):
     return (feature and feature.group(1)), (start and start.group(1))
 
 
-def resolved(feature, start, mode, runs=()):
+def resolved(feature, start, mode, runs=(), refs=()):
     """mode: design (this run writes documents and hands the plan to the builder),
-    build (it verifies, reviews and opens the pull request) or none."""
+    build (it verifies, reviews and opens the pull request) or none. design-docs:
+    the design references, space-separated, for the intent stage."""
     set_output(feature=feature, branch=branch_for(feature), start=start, base=env("BASE_REF"), mode=mode,
-               design=str(mode == "design").lower(), **{s: str(s in runs).lower() for s in STAGES})
+               design=str(mode == "design").lower(), **{"design-docs": " ".join(refs)},
+               **{s: str(s in runs).lower() for s in STAGES})
 
 
 def resolve(args):
@@ -498,6 +710,10 @@ def resolve(args):
     # `start: <stage>` line with it runs that feature from the stage instead
     # (`start: build` verifies it and opens the pull request again).
     body = env("SDLC_ISSUE_BODY")
+    # `design: docs/x.md#section` lines (in the issue body, or the design input)
+    # point the intent stage at approved design sections, quoted word for word,
+    # so the title only has to say what the feature is.
+    refs = list(dict.fromkeys(design_input() + design_refs(body)))
     if idea and not feature and body:
         named, from_stage = from_issue(body)
         if named and from_stage:
@@ -536,6 +752,10 @@ def resolve(args):
         fail(f"Bad feature name '{feature}': use lowercase letters, digits and hyphens.")
     branch, folder = branch_for(feature), folder_of(feature)
     use_feature_branch(branch)
+    for ref in refs:
+        design_text(ref)   # fails now, before any stage, when a reference doesn't resolve
+    if refs:
+        print("Design: " + ", ".join(refs))
     have = {s: (folder / f"{s}.md").exists() for s in STAGES}
     if start == "auto":
         start = "intent" if idea else next((s for s in STAGES if not have[s]), "build")
@@ -552,7 +772,7 @@ def resolve(args):
     print(f"Feature {feature} on {branch}, starting at {start}.")
     step_summary(f"**Feature** `{feature}` · **branch** [`{branch}`]({repo_url('tree', branch)}) · "
                  f"**starts at** {start}")
-    resolved(feature, start, "build" if start == "build" else "design", ORDER[ORDER.index(start):])
+    resolved(feature, start, "build" if start == "build" else "design", ORDER[ORDER.index(start):], refs)
 
 
 # ---------------------------------------------------------------- toolchain
@@ -614,6 +834,20 @@ def typecheck_hint(root):
     if config.get("files") == [] and not config.get("include"):
         return ""
     return "`npx tsc --noEmit` type-checks it"
+
+
+def typecheck_command(root="."):
+    """The command that type-checks the whole repository, for the Phase check: the
+    root package.json's `typecheck` script, else tsc as the root tsconfig.json asks,
+    else nothing (Python, or no TypeScript)."""
+    tc = detect_toolchain(root)
+    if not tc["node"]:
+        return ""
+    scripts = package_json(root).get("scripts")
+    if isinstance(scripts, dict) and "typecheck" in scripts:
+        return {"yarn": "yarn typecheck"}.get(tc["manager"], f"{tc['manager']} run typecheck")
+    hint = typecheck_hint(root) if tc["typescript"] else ""
+    return "npx tsc --build" if "--build" in hint else "npx tsc --noEmit" if hint else ""
 
 
 def dependencies(package):
@@ -730,9 +964,10 @@ def verification_notes(test_command, install_command=""):
     install = install_command or tc["install"]
     text = (f"The verify job sets up {' and '.join(setup)}, then installs the project with `{install}`."
             if install else f"The verify job sets up {' and '.join(setup)}; there is nothing to install yet.")
-    text += (" It runs each phase's Verify block from the repository root, then the whole suite with "
-             f"`{test_command}`, which fails if it collects no tests. Run one phase's tests with "
-             + " or ".join(examples) + ".")
+    text += (" A phase's pull request runs only that phase's Verify block, from the repository root, and the "
+             "type-check, so each Verify block must prove its whole phase by itself. When the feature is done, every "
+             f"phase's Verify block runs again, then the whole suite with `{test_command}`, which fails if it "
+             "collects no tests. Run one phase's tests with " + " or ".join(examples) + ".")
     if tc["lockfile"] and tc["packages"]:
         text += (f" A dependency goes in the `package.json` of the package that uses it, and `{tc['lockfile']}` "
                  "changes with it, so a phase that adds one targets both.")
@@ -795,11 +1030,19 @@ def prompt_parts(stage, folder, files, budget, idea):
             parts.append("## Existing intent.md (revise this; keep what the idea does not change)\n"
                          + read(folder / "intent.md"))
             sources.append("intent.md")
+        refs = design_input()
     else:
         for name in STAGES[: STAGES.index(stage)]:
             parts.append(f"## {name}.md\n" + read(folder / f"{name}.md"))
             sources.append(f"{name}.md")
-    named = mentioned_files("\n".join(parts[1:]), files)
+        refs = refs_in_intent(read(folder / "intent.md", ""))
+    # The design sections, word for word: the spec and plan follow them where the
+    # intent is shorter. The whole document isn't added as a file as well.
+    parts += design_parts(refs)
+    sources += refs
+    quoted = {ref.partition("#")[0].strip("./") for ref in refs}
+    text = "\n".join(parts[1:])
+    named = [f for f in mentioned_files(text, files) if f not in quoted]
     if stage == "plan":
         parts.append(f"## Feature\nFolder: `{folder.as_posix()}`. Branch: `{branch_for(folder.name)}`. "
                      f"Approved tag: `{approved_tag(folder.name)}`, created when this plan is approved; it marks the "
@@ -807,6 +1050,11 @@ def prompt_parts(stage, folder, files, budget, idea):
         if env("TEST_COMMAND"):
             parts.append("## How verification runs\n"
                          + verification_notes(env("TEST_COMMAND"), env("INSTALL_COMMAND")))
+    if stage in ("spec", "plan"):
+        code = sorted({f for f in named + module_files(text, files, near=named)
+                       if f.endswith(CODE_SUFFIXES) and not f.startswith(str(folder))})
+        if facts := facts_block(code, min(12000, budget // 4)):
+            parts.append(facts)
     parts.append("## Repository files\n" + repo_tree(files))
     if doc := project_doc(files):
         parts.append(f"## {doc} (start)\n" + read(doc)[:4000])
@@ -844,6 +1092,9 @@ def stage(args):
         text = with_hand_back(text, folder)
     if name == "intent":
         text = with_idea_files(text, env("SDLC_IDEA"), set(git("ls-files").splitlines()))
+        # A revision without design lines keeps the design the intent already names.
+        refs = design_input() or refs_in_intent(read(folder / "intent.md", ""))
+        text = with_design(text, refs)
 
     path = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)
@@ -926,7 +1177,19 @@ def verify(args):
     outside, frozen = scope(changed, upto[-1:] if args.phase else phases)
     tampered = contract_changes(tag, folder) if tag else []
 
-    rows = [("Whole test suite", args.test_command, *run_check(args.test_command))] if args.test_command else []
+    # One phase runs its own Verify block and the type-check: fast, and the whole
+    # feature's verification still runs the suite and every phase's block once the
+    # build is done. --full runs those for one phase too.
+    quick = bool(args.phase) and not args.full
+    rows = []
+    if quick:
+        typecheck = args.typecheck_command
+        typecheck = "" if typecheck == "none" else typecheck or typecheck_command()
+        if typecheck:
+            rows.append(("Type-check", typecheck, *run_check(typecheck)))
+        upto = upto[-1:]
+    elif args.test_command:
+        rows.append(("Whole test suite", args.test_command, *run_check(args.test_command)))
     for p in upto:
         rows.append((f"Phase {p['id']}: {p['name']}", p["verify"], *run_check(p["verify"])) if p["verify"] else
                     (f"Phase {p['id']}", "(no Verify block)", 1, "plan.md gives this phase no Verify command"))
@@ -941,6 +1204,9 @@ def verify(args):
                     "of editing them.")
     report = [f"# Verification: {feature}" + (f", phase {args.phase}" if args.phase else ""),
               f"**Result: {'PASSED' if ok else 'FAILED'}**\n", ""]
+    if quick:
+        report.append("This checks the phase's own Verify block and the type-check. The whole test suite and every "
+                      "phase's Verify block run once, when the whole feature is verified.\n")
     if not changed:
         report.append(f"> [!WARNING]\n> No code changed ({against}). Nothing has been built yet.\n")
     report += [f"**Scope** ({against}): {len(changed)} file(s) changed. "
@@ -1150,6 +1416,10 @@ def main():
                    help="check one phase: uncommitted changes, or with --base its phase branch")
     v.add_argument("--base", default=env("BASE_REF"), help="branch the feature (or, with --phase, the phase) goes into")
     v.add_argument("--test-command", default=env("TEST_COMMAND"))
+    v.add_argument("--typecheck-command", default=env("TYPECHECK_COMMAND"),
+                   help="with --phase: the type-check; empty finds one, none skips it")
+    v.add_argument("--full", action="store_true", default=env("SDLC_FULL").lower() == "true",
+                   help="with --phase: also run the whole suite and the Verify blocks of the earlier phases")
     for name, option, variable, text in (("verify", "--report", "REPORT", "also write the report to this file"),
                                          ("review", "--report", "REPORT", "also write the review to this file"),
                                          ("pr", "--report", "REPORT", "the verification report"),
