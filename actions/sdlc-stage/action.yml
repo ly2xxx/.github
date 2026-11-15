@@ -39,6 +39,8 @@ inputs:
     default: sdlc/features
   model:
     description: Ollama Cloud model for intent, spec, plan and review. Empty uses OLLAMA_MODEL in actions/defaults.env.
+  ollama-host:
+    description: The Ollama API the stage and review commands call. Empty uses https://ollama.com. An SDLC gateway goes here, with its token as ollama-api-key.
   ollama-api-key:
     description: Ollama Cloud API key (commands stage and review).
   think:
@@ -133,6 +135,7 @@ runs:
         FEATURES_DIR: ${{ inputs.features-dir }}
         OLLAMA_MODEL: ${{ inputs.model }}
         OLLAMA_API_KEY: ${{ inputs.ollama-api-key }}
+        OLLAMA_HOST: ${{ inputs.ollama-host }}
         OLLAMA_THINK: ${{ inputs.think }}
         OLLAMA_TIMEOUT: ${{ inputs.timeout-seconds }}
         MAX_CONTEXT_CHARS: ${{ inputs.max-context-chars }}
