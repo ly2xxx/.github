@@ -44,10 +44,10 @@ def test_chat_goes_through_a_gateway_and_names_the_repository_and_stage(monkeypa
     monkeypatch.setenv("GITHUB_REPOSITORY", "acme/app")
     monkeypatch.delenv("OLLAMA_THINK", raising=False)
     seen = capture(monkeypatch)
-    assert s.chat("deepseek-v4.1-flash:cloud", "write the plan", "plan") == "Hello."
+    assert s.chat("some-model", "write the plan", "plan") == "Hello."
     assert seen["url"] == "https://example.supabase.co/functions/v1/gateway/api/chat"
     assert seen["headers"]["authorization"] == "Bearer sgw_" + "a" * 48
     assert seen["headers"]["x-sdlc-repository"] == "acme/app"
     assert seen["headers"]["x-sdlc-stage"] == "plan"
-    assert seen["body"] == {"model": "deepseek-v4.1-flash:cloud", "stream": True,
+    assert seen["body"] == {"model": "some-model", "stream": True,
                             "messages": [{"role": "user", "content": "write the plan"}]}
