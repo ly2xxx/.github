@@ -89,6 +89,21 @@ A module path the way imports write it (`@/lib/auth`) names its file too. The
 prompts tell Ollama to take names, roles, fields and response shapes from these
 facts and never guess one.
 
+### Calling Ollama through a gateway
+
+By default the stages and the review call `https://ollama.com` with the
+`OLLAMA_API_KEY` secret. To go through an SDLC gateway instead, set
+`ollama-host` to its address and put the gateway's token in `OLLAMA_API_KEY`:
+
+```yaml
+    with:
+      ollama-host: https://<project>.supabase.co/functions/v1/gateway
+```
+
+Every call also sends `X-SDLC-Repository` (the calling repository) and
+`X-SDLC-Stage` (`intent`, `spec`, `plan` or `review`), so a gateway can record
+who used what. Ollama itself ignores them.
+
 ### Building from a design document
 
 A feature too big for one line goes in a design document in the repository,

@@ -184,7 +184,19 @@ def _stream(req, model, deadline):
     raise http.client.IncompleteRead(b"", None)
 
 
-def chat(model, prompt):
+def ollama_headers(stage=""):
+    """The request headers for one model call. A gateway in front of Ollama (an
+    `ollama-host` other than ollama.com) can record which repository and which
+    stage made the call; Ollama itself ignores the two X-SDLC headers."""
+    headers = {"Authorization": "Bearer " + env("OLLAMA_API_KEY"), "Content-Type": "application/json"}
+    if repository := env("GITHUB_REPOSITORY"):
+        headers["X-SDLC-Repository"] = repository
+    if stage:
+        headers["X-SDLC-Stage"] = stage
+    return headers
+
+
+def chat(model, prompt, stage=""):
     payload = {"model": model, "stream": True, "messages": [{"role": "user", "content": prompt}]}
     think = env("OLLAMA_THINK").lower()
     if think:
@@ -193,7 +205,7 @@ def chat(model, prompt):
     req = urllib.request.Request(
         env("OLLAMA_HOST", "https://ollama.com").rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
-        headers={"Authorization": "Bearer " + env("OLLAMA_API_KEY"), "Content-Type": "application/json"})
+        headers=ollama_headers(stage))
     deadline = time.monotonic() + int(env("OLLAMA_TIMEOUT", "1200"))
     print(f"Calling {model}" + (f" (think={think})" if think else ""), flush=True)
     for attempt in (1, 2):
@@ -1080,14 +1092,14 @@ def stage(args):
                                   int(env("MAX_CONTEXT_CHARS", "60000")), env("SDLC_IDEA"))
     print(f"Writing {name}.md for {feature}", flush=True)
     prompt = "\n\n".join(parts)
-    text, problems = unfence(chat(model, prompt)), []
+    text, problems = unfence(chat(model, prompt, name)), []
     if name == "plan":
         intent = read(folder / "intent.md")
         if problems := plan_problems(text, intent):
             print("::warning::The plan is incomplete; asking once more: " + " ".join(problems), flush=True)
             retry = ("\n\n## Your previous plan was rejected\n" + "\n".join(f"- {p}" for p in problems)
                      + "\n\n## Your previous plan\n" + text + "\n\nWrite the whole plan again, fixed.")
-            text = unfence(chat(model, prompt + retry))
+            text = unfence(chat(model, prompt + retry, name))
             problems = plan_problems(text, intent)
         text = with_hand_back(text, folder)
     if name == "intent":
@@ -1338,7 +1350,7 @@ def review(args):
     parts += [f"## {s}.md (approved)\n" + approved_text(tag, folder / f"{s}.md") for s in STAGES]
     parts += [f"## Diffstat\n```\n{stat}\n```", f"## Diff\n```diff\n{diff}\n```{note}"]
     print(f"Reviewing {feature} with {model}", flush=True)
-    text = unfence(chat(model, "\n\n".join(parts)))
+    text = unfence(chat(model, "\n\n".join(parts), "review"))
     publish("\n".join([f"<!-- sdlc stage=review model={model} -->", "## Ollama review (advisory)", "",
                        f"`{model}` compared the diff with the approved spec and plan. Its review informs the "
                        "merge but doesn't gate it; the verification above does.", "", text, ""]), args.report)

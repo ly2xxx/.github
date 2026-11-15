@@ -38,6 +38,9 @@ on:
       think:
         description: Thinking for reasoning models - true, false, low, medium or high. Empty leaves the default.
         type: string
+      ollama-host:
+        description: "The Ollama API to call. Empty uses https://ollama.com. To go through an SDLC gateway, set its address here and put the gateway token in the OLLAMA_API_KEY secret."
+        type: string
       python-version:
         type: string
         default: "3.12"
@@ -142,6 +145,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          ollama-host: ${{ inputs.ollama-host }}
 
   review-intent:
     name: "✋ Review intent.md"
@@ -174,6 +178,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          ollama-host: ${{ inputs.ollama-host }}
 
   review-spec:
     name: "✋ Review spec.md"
@@ -208,6 +213,7 @@ jobs:
           test-command: ${{ inputs.test-command }}
           install-command: ${{ inputs.install-command }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          ollama-host: ${{ inputs.ollama-host }}
 
   review-plan:
     name: "✋ Review plan.md"
@@ -337,6 +343,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          ollama-host: ${{ inputs.ollama-host }}
           report: ${{ runner.temp }}/ollama-review.md
       - uses: actions/upload-artifact@v4
         with:
