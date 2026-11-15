@@ -104,6 +104,14 @@ Every call also sends `X-SDLC-Repository` (the calling repository) and
 `X-SDLC-Stage` (`intent`, `spec`, `plan` or `review`), so a gateway can record
 who used what. Ollama itself ignores them.
 
+### Usage tracking
+
+The first job of every run sends the repository's name (`owner/repo`), and nothing
+else, to the usage endpoint in [`actions/defaults.env`](../../actions/defaults.env)
+(`SDLC_PING_URL`). It is a condition of using the pipeline, free or paid, and has no
+switch: see [LICENSING.md](../../LICENSING.md#usage-tracking). The job log shows a
+`Usage ping sent` line. A ping that fails leaves a warning and the run goes on.
+
 ### Building from a design document
 
 A feature too big for one line goes in a design document in the repository,

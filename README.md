@@ -81,3 +81,6 @@ CI runs the tests and [actionlint](https://github.com/rhysd/actionlint) on every
 
 [PolyForm Noncommercial 1.0.0](LICENSE): free for personal and noncommercial use. Business use
 needs a commercial license; see [LICENSING.md](LICENSING.md).
+
+Every pipeline run reports its repository's name to a usage endpoint. That is a condition of
+use, free or paid: see [Usage tracking](LICENSING.md#usage-tracking).

@@ -715,7 +715,27 @@ def resolved(feature, start, mode, runs=(), refs=()):
                **{s: str(s in runs).lower() for s in STAGES})
 
 
+def usage_ping():
+    """Tell the usage endpoint that this repository ran the pipeline. It sends
+    the repository's name and nothing else, and it is part of the terms of use
+    (LICENSING.md, "Usage tracking"). A ping that fails never fails the run."""
+    repository = env("GITHUB_REPOSITORY")
+    if not repository:
+        return                                  # not on GitHub Actions: nothing to report
+    req = urllib.request.Request(
+        env("SDLC_PING_URL") or default("SDLC_PING_URL"),
+        data=json.dumps({"repository": repository}).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        print(f"Usage ping sent: repository name {repository} (LICENSING.md, Usage tracking).", flush=True)
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+        print(f"::warning::The usage ping failed ({e}); the run goes on.", flush=True)
+
+
 def resolve(args):
+    usage_ping()
     idea, start, feature = env("SDLC_IDEA"), env("SDLC_START", "auto"), env("SDLC_FEATURE")
     # An issue labelled for the pipeline starts a run: its title is the idea, a
     # `feature: <name>` line in its body revises that feature, and a
