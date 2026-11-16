@@ -14,7 +14,7 @@ def alert(name, cve, fixed, sev="high", manifest="requirements.txt", ecosystem="
     return {"number": n, "html_url": f"https://github.com/a/b/security/dependabot/{n}",
             "dependency": {"package": {"ecosystem": ecosystem, "name": name}, "manifest_path": manifest},
             "security_advisory": {"cve_id": cve, "ghsa_id": f"GHSA-{n}", "severity": sev, "summary": f"bug {n}"},
-            "security_vulnerability": {"severity": sev, "vulnerable_version_range": "< 9",
+            "security_vulnerability": {"severity": sev, "vulnerable_version_range": "< 0.1",
                                        "first_patched_version": fixed and {"identifier": fixed}}}
 
 
@@ -253,3 +253,15 @@ def test_no_change_comment_when_a_report_was_cut_down():
     assert d.changes(None, {("a", "1")}) == "" and d.changes({("a", "1")}, None) == ""
     assert d.previous_ids("no json here") is None
     assert d.previous_ids('```json\n{"truncated":true,"packages":[]}\n```') is None
+
+
+def test_an_alert_without_a_fix_is_cleared_by_an_upgrade_above_its_range():
+    assert d.clears("2.13.0", "<= 2.6.0") and not d.clears("2.6.0", "<= 2.6.0")
+    assert d.clears("3.17.0", ">= 3.7.0, < 3.17.0") and not d.clears("3.16.9", ">= 3.7.0, < 3.17.0")
+    assert not d.clears("9.0", ">= 1.0") and not d.clears("", "< 2") and not d.clears("2.0", "")
+    torch = [alert("torch", "CVE-1", "2.13.0", n=1), alert("torch", "CVE-2", None, n=2)]
+    torch[1]["security_vulnerability"]["vulnerable_version_range"] = "<= 2.6.0"
+    pandasai = [alert("pandasai", "CVE-3", "0.8.1", n=3), alert("pandasai", "CVE-4", None, n=4)]
+    pandasai[1]["security_vulnerability"]["vulnerable_version_range"] = "<= 2.4.2"
+    packages = {p["package"]: p for p in d.group([d.from_dependabot(a) for a in torch + pandasai])}
+    assert packages["torch"]["no_fix"] == [] and packages["pandasai"]["no_fix"] == ["CVE-4"]

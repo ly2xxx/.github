@@ -172,6 +172,16 @@ def pinned_versions(path):
     return pins
 
 
+def clears(version, vulnerable_range):
+    """True when `version` is above every upper bound of a range like "<= 2.6.0" or
+    ">= 3.7.0, < 3.17.0". A range with no upper bound is never cleared."""
+    bounds = re.findall(r"(<=?)\s*([^\s,]+)", vulnerable_range or "")
+    if not version or not bounds:
+        return False
+    return all(version_key(version) > version_key(v) if op == "<=" else version_key(version) >= version_key(v)
+               for op, v in bounds)
+
+
 def severity(value):
     value = (value or "unknown").lower()
     return {"moderate": "medium"}.get(value, value if value in SEVERITIES else "unknown")
@@ -282,7 +292,9 @@ def group(alerts):
         p["alerts"].sort(key=lambda a: (SEVERITIES.index(a["severity"]), a["id"]))
         p["severity"] = p["alerts"][0]["severity"]
         p["fix_to"] = highest(a["fixed"] for a in p["alerts"])
-        p["no_fix"] = sorted(a["id"] for a in p["alerts"] if not a["fixed"])
+        # An alert with no fixed version is still cleared by fix_to when fix_to is above
+        # its vulnerable range ("<= 2.6.0"); only the others need a decision.
+        p["no_fix"] = sorted(a["id"] for a in p["alerts"] if not a["fixed"] and not clears(p["fix_to"], a["range"]))
     return sorted(packages.values(), key=lambda p: (SEVERITIES.index(p["severity"]), -len(p["alerts"]),
                                                     p["package"], p["manifest"]))
 
