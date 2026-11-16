@@ -1,0 +1,69 @@
+name: Dependabot monitor (reusable)
+
+# Keeps one issue, labelled `dependabot`, listing the repository's open Dependabot
+# alerts by package, with the version that clears them all. It comments when alerts
+# appear or go away and closes itself when none are left. The sdlc-dependabot-remediate
+# skill reads the issue and fixes the alerts through the SDLC Pipeline.
+#
+# The workflow's own token can't read Dependabot alerts: pass a fine-grained token with
+# "Dependabot alerts: read" as DEPENDABOT_ALERTS_TOKEN. Without one it scans the
+# manifests with Trivy instead. Every run reports the repository's name to the usage
+# endpoint, as the pipeline does (LICENSING.md, "Usage tracking"). How to call it:
+# README.md in this folder.
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: Label of the tracking issue.
+        type: string
+        default: dependabot
+      fallback:
+        description: Scan with Trivy when the alerts can't be read. false fails the run instead.
+        type: boolean
+        default: true
+      wait-minutes:
+        description: Wait this long first, e.g. 10 after a push, so Dependabot has rescanned the manifests.
+        type: number
+        default: 0
+    secrets:
+      DEPENDABOT_ALERTS_TOKEN:
+        description: Fine-grained token with "Dependabot alerts - read" on the calling repository.
+        required: false
+    outputs:
+      source:
+        description: dependabot or trivy.
+        value: ${{ jobs.monitor.outputs.source }}
+      open:
+        description: Number of open alerts.
+        value: ${{ jobs.monitor.outputs.open }}
+      issue:
+        description: The tracking issue's number.
+        value: ${{ jobs.monitor.outputs.issue }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  monitor:
+    name: Read the alerts and update the issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      issues: write         # the tracking issue and its label
+    outputs:
+      source: ${{ steps.alerts.outputs.source }}
+      open: ${{ steps.alerts.outputs.open }}
+      issue: ${{ steps.alerts.outputs.issue }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: alerts
+        uses: ly2xxx/.github/actions/dependabot-alerts@main
+        with:
+          alerts-token: ${{ secrets.DEPENDABOT_ALERTS_TOKEN }}
+          label: ${{ inputs.label }}
+          fallback: ${{ inputs.fallback }}
+          wait-minutes: ${{ inputs.wait-minutes }}

@@ -112,6 +112,9 @@ else, to the usage endpoint in [`actions/defaults.env`](../../actions/defaults.e
 switch: see [LICENSING.md](../../LICENSING.md#usage-tracking). The job log shows a
 `Usage ping sent` line. A ping that fails leaves a warning and the run goes on.
 
+The [Dependabot monitor](../../actions/dependabot-alerts/README.md) (`dependabot-monitor.yml`)
+sends the same ping on every run.
+
 ### Building from a design document
 
 A feature too big for one line goes in a design document in the repository,
