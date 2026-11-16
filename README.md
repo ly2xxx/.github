@@ -11,6 +11,8 @@ deterministic checks decide whether it is done.
 | [`actions/sdlc-stage`](actions/sdlc-stage/README.md) | The pipeline's steps (`sdlc_stage.py`, standard library only). |
 | [`actions/project-env`](actions/project-env/action.yml) | The repository's toolchains (Python, Node.js) and dependencies, read from the files at its top level. |
 | [`actions/python-env`](actions/python-env/action.yml) | A `.venv` with the project and pytest installed, on `PATH`. Python only; the workflows use `project-env`. |
+| [`.github/workflows/dependabot-monitor.yml`](actions/dependabot-alerts/README.md) | Keeps one issue listing the open Dependabot alerts by package, with the version to upgrade to. |
+| [`actions/dependabot-alerts`](actions/dependabot-alerts/README.md) | The monitor's steps (`dependabot_alerts.py`, standard library only). |
 | [`actions/security-scan`](actions/security-scan/README.md) | gitleaks and Trivy, failing only on what a branch adds. |
 | [`actions/commit-delta-summary`](actions/commit-delta-summary/README.md) | An Ollama summary of the changes between two revisions. |
 
@@ -82,5 +84,5 @@ CI runs the tests and [actionlint](https://github.com/rhysd/actionlint) on every
 [PolyForm Noncommercial 1.0.0](LICENSE): free for personal and noncommercial use. Business use
 needs a commercial license; see [LICENSING.md](LICENSING.md).
 
-Every pipeline run reports its repository's name to a usage endpoint. That is a condition of
+Every pipeline and Dependabot monitor run reports its repository's name to a usage endpoint. That is a condition of
 use, free or paid: see [Usage tracking](LICENSING.md#usage-tracking).

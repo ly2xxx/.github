@@ -1,0 +1,96 @@
+name: Dependabot alerts
+description: Reads a repository's open Dependabot alerts (or, without a token that can, scans it with Trivy), groups them by package with the version to upgrade to, and keeps one tracking issue up to date.
+author: ly2xxx
+
+# The workflow's GITHUB_TOKEN can't read Dependabot alerts, so alerts-token is a
+# fine-grained token with "Dependabot alerts: read". Without it the action falls back
+# to Trivy, installed from its GitHub release at a pinned version and checksum, the
+# same as actions/security-scan (a test keeps the two pins equal).
+
+inputs:
+  alerts-token:
+    description: Token that can read the repository's Dependabot alerts. Empty uses Trivy.
+  github-token:
+    description: Token that writes the tracking issue (issues - write).
+    default: ${{ github.token }}
+  label:
+    description: Label of the tracking issue. Created when missing.
+    default: dependabot
+  fallback:
+    description: "\"true\" scans with Trivy when the alerts can't be read; \"false\" fails instead."
+    default: "true"
+  wait-minutes:
+    description: Wait this long first, for example after a push so Dependabot can rescan the manifests.
+    default: "0"
+  trivy-version:
+    default: 0.74.0
+  trivy-sha256:
+    description: SHA-256 of trivy_<version>_Linux-64bit.tar.gz.
+    default: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+
+outputs:
+  source:
+    description: Where the alerts came from - dependabot or trivy.
+    value: ${{ steps.publish.outputs.source }}
+  open:
+    description: Number of open alerts.
+    value: ${{ steps.publish.outputs.open }}
+  packages:
+    description: Number of packages with open alerts.
+    value: ${{ steps.publish.outputs.packages }}
+  issue:
+    description: The tracking issue's number. Empty when there are no alerts and no issue.
+    value: ${{ steps.publish.outputs.issue }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for Dependabot to rescan
+      if: inputs.wait-minutes != '0' && inputs.wait-minutes != ''
+      shell: bash
+      env:
+        MINUTES: ${{ inputs.wait-minutes }}
+      run: sleep $(( MINUTES * 60 ))
+
+    - id: read
+      name: Read the Dependabot alerts
+      shell: bash
+      env:
+        DEPENDABOT_ALERTS_TOKEN: ${{ inputs.alerts-token }}
+        FALLBACK: ${{ inputs.fallback }}
+        PYTHONUNBUFFERED: "1"
+      run: python3 "$GITHUB_ACTION_PATH/dependabot_alerts.py" read --out "$RUNNER_TEMP/alerts.json"
+
+    - name: Install Trivy (pinned, checksum-verified)
+      if: steps.read.outputs.source == ''
+      shell: bash
+      env:
+        TRIVY_VERSION: ${{ inputs.trivy-version }}
+        TRIVY_SHA256: ${{ inputs.trivy-sha256 }}
+      run: |
+        set -euo pipefail
+        if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
+          echo "::error::The Trivy fallback runs on Linux x86_64 runners only."; exit 1
+        fi
+        bin="$RUNNER_TEMP/dependabot-alerts-bin"; mkdir -p "$bin"; cd "$RUNNER_TEMP"
+        curl -sSfL --retry 3 -o trivy.tar.gz \
+          "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+        echo "$TRIVY_SHA256  trivy.tar.gz" | sha256sum -c --quiet - || { echo "::error::trivy.tar.gz doesn't match its pinned checksum."; exit 1; }
+        tar -xzf trivy.tar.gz -C "$bin" trivy
+        echo "$bin" >> "$GITHUB_PATH"
+
+    - name: Scan with Trivy
+      if: steps.read.outputs.source == ''
+      shell: bash
+      env:
+        PYTHONUNBUFFERED: "1"
+      run: python3 "$GITHUB_ACTION_PATH/dependabot_alerts.py" trivy --out "$RUNNER_TEMP/alerts.json"
+
+    - id: publish
+      name: Update the tracking issue
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        LABEL: ${{ inputs.label }}
+        PYTHONUNBUFFERED: "1"
+      run: python3 "$GITHUB_ACTION_PATH/dependabot_alerts.py" publish --alerts "$RUNNER_TEMP/alerts.json"
