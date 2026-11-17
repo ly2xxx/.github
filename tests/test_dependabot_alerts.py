@@ -265,3 +265,36 @@ def test_an_alert_without_a_fix_is_cleared_by_an_upgrade_above_its_range():
     pandasai[1]["security_vulnerability"]["vulnerable_version_range"] = "<= 2.4.2"
     packages = {p["package"]: p for p in d.group([d.from_dependabot(a) for a in torch + pandasai])}
     assert packages["torch"]["no_fix"] == [] and packages["pandasai"]["no_fix"] == ["CVE-4"]
+
+
+def test_closing_comment_lists_the_alerts_that_closed(gh, tmp_path):
+    gh["alerts"] = [alert("torch", "CVE-3", "2.2.0", n=1), alert("torch", "CVE-4", "2.6.0", n=2)]
+    run(gh, tmp_path)
+    gh["alerts"] = []
+    run(gh, tmp_path)
+    last = gh["issues"][1]["comments"][-1]
+    assert last.startswith("**2 no longer open:** `torch` CVE-3, `torch` CVE-4")
+    assert last.endswith("the monitor opens a new issue when alerts appear.")
+
+
+def test_history_records_each_change_in_the_open_count(gh, tmp_path):
+    gh["alerts"] = [alert("torch", "CVE-3", "2.2.0", n=1)]
+    run(gh, tmp_path)
+    assert "**History:**" not in gh["issues"][1]["body"]           # one point is no history yet
+    run(gh, tmp_path)                                               # same count: no new point
+    gh["alerts"] = [alert("torch", "CVE-3", "2.2.0", n=1), alert("flask", "CVE-1", "2.2.5", n=2)]
+    run(gh, tmp_path)
+    gh["alerts"] = []
+    run(gh, tmp_path)
+    body = gh["issues"][1]["body"]
+    assert [h["open"] for h in data_of(body)["history"]] == [1, 2, 0]
+    assert "**History:** 1 → 2 → 0 open alerts (since " in body
+
+
+def test_history_starts_from_a_report_written_before_it_existed():
+    legacy = '```json\n{"version":1,"read_at":"2026-11-16 21:02 UTC","open":94,"packages":[]}\n```'
+    assert d.next_history(legacy, "later", 120) == [{"read_at": "2026-11-16 21:02 UTC", "open": 94},
+                                                    {"read_at": "later", "open": 120}]
+    assert d.next_history(None, "now", 5) == [{"read_at": "now", "open": 5}]
+    long = '```json\n' + json.dumps({"history": [{"read_at": str(i), "open": i} for i in range(30)]}) + '\n```'
+    assert len(d.next_history(long, "now", 99)) == d.MAX_HISTORY
