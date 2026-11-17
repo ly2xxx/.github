@@ -184,15 +184,31 @@ def _stream(req, model, deadline):
     raise http.client.IncompleteRead(b"", None)
 
 
+OLLAMA_COM = "https://ollama.com"
+
+
+def through_gateway():
+    """True when the calls go to an SDLC gateway (an `ollama-host` other than
+    ollama.com) rather than to Ollama itself."""
+    host = env("OLLAMA_HOST", OLLAMA_COM).rstrip("/").lower()
+    return host not in (OLLAMA_COM, "https://www.ollama.com")
+
+
 def ollama_headers(stage=""):
     """The request headers for one model call. A gateway in front of Ollama (an
     `ollama-host` other than ollama.com) can record which repository and which
-    stage made the call; Ollama itself ignores the two X-SDLC headers."""
+    stage made the call; Ollama itself ignores the two X-SDLC headers.
+
+    LLM_API_KEY, the caller's own key for another model provider, goes in
+    X-SDLC-Provider-Key, and only to a gateway: sent to ollama.com it would hand
+    a third party the key, so there it is left out."""
     headers = {"Authorization": "Bearer " + env("OLLAMA_API_KEY"), "Content-Type": "application/json"}
     if repository := env("GITHUB_REPOSITORY"):
         headers["X-SDLC-Repository"] = repository
     if stage:
         headers["X-SDLC-Stage"] = stage
+    if (provider_key := env("LLM_API_KEY")) and through_gateway():
+        headers["X-SDLC-Provider-Key"] = provider_key
     return headers
 
 
@@ -203,7 +219,7 @@ def chat(model, prompt, stage=""):
         # true/false, or low/medium/high for models that take a level.
         payload["think"] = {"true": True, "false": False}.get(think, think)
     req = urllib.request.Request(
-        env("OLLAMA_HOST", "https://ollama.com").rstrip("/") + "/api/chat",
+        env("OLLAMA_HOST", OLLAMA_COM).rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
         headers=ollama_headers(stage))
     deadline = time.monotonic() + int(env("OLLAMA_TIMEOUT", "1200"))
