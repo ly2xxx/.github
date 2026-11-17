@@ -104,6 +104,16 @@ Every call also sends `X-SDLC-Repository` (the calling repository) and
 `X-SDLC-Stage` (`intent`, `spec`, `plan` or `review`), so a gateway can record
 who used what. Ollama itself ignores them.
 
+**Your own model provider.** Through a gateway, a repository can use another
+provider's models with its own key. Put the key in an optional `LLM_API_KEY`
+secret, and name the model with the provider in front, for example
+`openai/<model>` or `anthropic/<model>` in the `OLLAMA_MODEL` variable. The
+pipeline sends the key in an `X-SDLC-Provider-Key` header, and the gateway
+passes it to that provider. The gateway token stays in `OLLAMA_API_KEY`: it
+says who is calling. The provider key is sent only when `ollama-host` is set
+to something other than ollama.com, so it never goes to Ollama. Which
+providers a gateway supports is up to the gateway.
+
 ### Usage tracking
 
 The first job of every run sends the repository's name (`owner/repo`), and nothing

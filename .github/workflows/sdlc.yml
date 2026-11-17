@@ -79,6 +79,9 @@ on:
     secrets:
       OLLAMA_API_KEY:
         required: false
+      LLM_API_KEY:
+        description: "Optional. Your own key for another model provider, used only through an SDLC gateway (ollama-host): the gateway sends it to the provider the model name picks, such as openai/<model>."
+        required: false
       SDLC_PR_TOKEN:
         description: Optional token that opens the pull request, so CI runs on it.
         required: false
@@ -145,6 +148,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
           ollama-host: ${{ inputs.ollama-host }}
 
   review-intent:
@@ -178,6 +182,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
           ollama-host: ${{ inputs.ollama-host }}
 
   review-spec:
@@ -213,6 +218,7 @@ jobs:
           test-command: ${{ inputs.test-command }}
           install-command: ${{ inputs.install-command }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
           ollama-host: ${{ inputs.ollama-host }}
 
   review-plan:
@@ -343,6 +349,7 @@ jobs:
           model: ${{ inputs.model }}
           think: ${{ inputs.think }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
           ollama-host: ${{ inputs.ollama-host }}
           report: ${{ runner.temp }}/ollama-review.md
       - uses: actions/upload-artifact@v4

@@ -43,6 +43,8 @@ inputs:
     description: The Ollama API the stage and review commands call. Empty uses https://ollama.com. An SDLC gateway goes here, with its token as ollama-api-key.
   ollama-api-key:
     description: Ollama Cloud API key (commands stage and review).
+  llm-api-key:
+    description: Optional key for another model provider (OpenAI, Anthropic, ...). Sent only to an SDLC gateway set as ollama-host, never to ollama.com; the gateway passes it to the provider the model name picks.
   think:
     description: Thinking for reasoning models - true, false, low, medium or high. Empty leaves the model's default.
   timeout-seconds:
@@ -135,6 +137,7 @@ runs:
         FEATURES_DIR: ${{ inputs.features-dir }}
         OLLAMA_MODEL: ${{ inputs.model }}
         OLLAMA_API_KEY: ${{ inputs.ollama-api-key }}
+        LLM_API_KEY: ${{ inputs.llm-api-key }}
         OLLAMA_HOST: ${{ inputs.ollama-host }}
         OLLAMA_THINK: ${{ inputs.think }}
         OLLAMA_TIMEOUT: ${{ inputs.timeout-seconds }}
