@@ -62,7 +62,11 @@ says so. `fallback: false` makes that an error.
   large report drops alert details, then some alerts, to fit an issue body, and sets
   `truncated: true`; the package rows always stay.
 - **Changes** get a comment: alerts that appeared and alerts no longer open.
-- **No alerts left**: the issue closes itself. The next alert opens a new one.
+- **History**: a line under the source shows how the open count moved, one point per
+  change (`94 → 120 → 35 → 0`, since the first run), so a jump after a manifest change
+  is visible where people look. The JSON keeps the last 20 points as `history`.
+- **No alerts left**: the issue lists the alerts that closed and closes itself. The next
+  alert opens a new one.
 
 Only an open issue with the label *and* the monitor's marker is updated; other issues
 with the label are left alone.

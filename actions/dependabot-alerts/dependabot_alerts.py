@@ -307,12 +307,25 @@ def cell(text):
     return str(text).replace("|", "\\|").replace("\n", " ") or "—"
 
 
-def render(data, packages, run_url, now):
+MAX_HISTORY = 20     # open-alert counts kept in the issue, newest last
+
+
+def history_line(history):
+    """'94 → 120 → 35 (since 2026-11-16 21:02 UTC)': how the open count has moved."""
+    if len(history) < 2:
+        return ""
+    counts = " → ".join(str(h["open"]) for h in history)
+    return f"**History:** {counts} open alerts (since {history[0]['read_at']})."
+
+
+def render(data, packages, run_url, now, history=()):
     alerts = data["alerts"]
     source = ("Dependabot alerts API" if data["source"] == "dependabot"
               else "Trivy scan of the default branch (no token that can read Dependabot alerts)")
     lines = [MARKER, "# Dependabot alerts", "",
              f"Source: {source} · Read {now}" + (f" · [Run]({run_url})" if run_url else ""), ""]
+    if history_line(history):
+        lines += [history_line(history), ""]
     if not alerts:
         lines += ["**No open alerts.** This issue closes itself; the monitor opens a new one when alerts appear.", ""]
     else:
@@ -332,7 +345,7 @@ def render(data, packages, run_url, now):
                   "so one upgrade clears them all. *No fix*: no release fixes it; remove or replace the "
                   "package, or dismiss the alert with a reason.", ""]
     payload = {"version": 1, "source": data["source"], "repository": env("GITHUB_REPOSITORY"), "read_at": now,
-               "open": len(alerts), "severities": counts(alerts), "packages": packages}
+               "open": len(alerts), "severities": counts(alerts), "history": list(history), "packages": packages}
     def body():
         blob = json.dumps(payload, separators=(",", ":"))
         return "\n".join(lines + ["<details><summary>Data for tools</summary>", "", "```json", blob, "```", "",
@@ -365,6 +378,28 @@ def previous_ids(body):
     if not isinstance(data, dict) or data.get("truncated"):
         return None
     return {(p["package"], a["id"]) for p in data.get("packages", []) for a in p.get("alerts", [])}
+
+
+def previous_data(body):
+    """The JSON block of a report, as a dict ({} when there is none)."""
+    m = re.search(r"```json\n(.*?)\n```", body or "", flags=re.DOTALL)
+    try:
+        data = json.loads(m.group(1)) if m else {}
+    except ValueError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def next_history(previous_body, now, open_count):
+    """The issue's count history with this run added when the count changed. A report
+    from before the history existed starts it from its own count."""
+    old = previous_data(previous_body)
+    history = [h for h in old.get("history", []) if isinstance(h, dict) and "open" in h and "read_at" in h]
+    if not history and "open" in old and "read_at" in old:
+        history = [{"read_at": old["read_at"], "open": old["open"]}]
+    if not history or history[-1]["open"] != open_count:
+        history.append({"read_at": now, "open": open_count})
+    return history[-MAX_HISTORY:]
 
 
 def changes(before, after):
@@ -404,7 +439,10 @@ def publish(args):
     repository, token, label = env("GITHUB_REPOSITORY"), env("GITHUB_TOKEN"), env("LABEL", "dependabot")
     run_url = (f"{env('GITHUB_SERVER_URL', 'https://github.com')}/{repository}/actions/runs/{env('GITHUB_RUN_ID')}"
                if env("GITHUB_RUN_ID") else "")
-    body = render(data, packages, run_url, time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()))
+    now = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    issue = find_issue(repository, label, token) if token and repository else None
+    history = next_history(issue.get("body") if issue else None, now, len(data["alerts"]))
+    body = render(data, packages, run_url, now, history)
     summary = env("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
@@ -416,12 +454,14 @@ def publish(args):
         print(body)
         print("::warning::No GITHUB_TOKEN or GITHUB_REPOSITORY: the report went to the log only.")
     else:
-        issue = find_issue(repository, label, token)
         if n == 0 and issue:
+            # Say which alerts closed before closing, as every other run does.
+            note = changes(previous_ids(issue.get("body")), set())
             request("PATCH", f"/repos/{repository}/issues/{issue['number']}", token,
                     {"title": title, "body": body, "state": "closed", "state_reason": "completed"})
+            closing = "No open alerts are left. Closing; the monitor opens a new issue when alerts appear."
             request("POST", f"/repos/{repository}/issues/{issue['number']}/comments", token,
-                    {"body": "No open alerts are left. Closing; the monitor opens a new issue when alerts appear."})
+                    {"body": f"{note}\n\n{closing}" if note else closing})
             issue_number = str(issue["number"])
             print(f"No open alerts: closed issue #{issue_number}.")
         elif issue:
